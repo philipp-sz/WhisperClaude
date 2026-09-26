@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.egg-info/
+*.wav
+!tests/data/*.wav
+benchmark_results*.json
