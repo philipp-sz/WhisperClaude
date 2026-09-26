@@ -8,15 +8,19 @@ SAMPLE_RATE = 16_000
 
 
 class Transcriber:
-    """Keeps one Whisper model warm and turns audio arrays into text."""
+    """Keeps one Whisper model warm and turns audio arrays into text.
+
+    Defaults come from the step-1 benchmark (docs/PLAN.md): small, greedy decoding,
+    4 threads (8 threads was slower for small on the P/E-core CPU).
+    """
 
     def __init__(
         self,
-        model: str = "large-v3-turbo",
+        model: str = "small",
         compute_type: str = "int8",
-        beam_size: int = 5,
+        beam_size: int = 1,
         language: str | None = None,
-        cpu_threads: int = 0,
+        cpu_threads: int = 4,
     ) -> None:
         self.beam_size = beam_size
         self.language = language  # None = auto-detect

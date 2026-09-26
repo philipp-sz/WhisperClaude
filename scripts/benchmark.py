@@ -104,7 +104,7 @@ class Sampler:
         }
 
 
-def worker(model_name, threads):
+def worker(model_name, threads, beam):
     sys.path.insert(0, str(ROOT))
     from whisperclaude.transcriber import Transcriber
 
@@ -112,12 +112,12 @@ def worker(model_name, threads):
     rss_before = psutil.Process().memory_info().rss / 2**20
 
     t0 = time.perf_counter()
-    tr = Transcriber(model=model_name, cpu_threads=threads)
+    tr = Transcriber(model=model_name, cpu_threads=threads, beam_size=beam)
     load_s = time.perf_counter() - t0
 
     tr.transcribe(clips["de"])  # warm-up (first call has one-time costs)
 
-    out = {"model": model_name, "threads": threads, "load_s": load_s,
+    out = {"model": model_name, "threads": threads, "beam": beam, "load_s": load_s,
            "rss_before_mb": rss_before, "clips": {}}
     for lang, audio in clips.items():
         dur = len(audio) / SR
@@ -153,13 +153,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rerecord", action="store_true")
     ap.add_argument("--models", nargs="+", default=MODELS)
-    # faster-whisper defaults to 4 threads; use all cores unless told otherwise
-    ap.add_argument("--threads", type=int, default=psutil.cpu_count())
+    # 4 = faster-whisper's default; 8 was slower for small (P/E-core mix), see PLAN.md
+    ap.add_argument("--threads", type=int, default=4)
+    ap.add_argument("--beams", type=int, nargs="+", default=[5])
     ap.add_argument("--worker", help=argparse.SUPPRESS)
+    ap.add_argument("--beam", type=int, default=5, help=argparse.SUPPRESS)
     args = ap.parse_args()
 
     if args.worker:
-        return worker(args.worker, args.threads)
+        return worker(args.worker, args.threads, args.beam)
 
     for lang in PROMPTS:
         if args.rerecord or not (AUDIO_DIR / f"{lang}.wav").exists():
@@ -171,34 +173,36 @@ def main():
     for m in args.models:
         print(f"\n=== {m}: downloading (if needed) ===", flush=True)
         download_model(m)  # keep download time out of load time
-        print(f"=== {m}: benchmarking, {args.threads} threads "
-              f"({RUNS} runs per clip after warm-up) ===", flush=True)
-        p = subprocess.run(
-            # -X utf8: piped stdout is cp1252 on Windows otherwise; umlauts break decoding
-            [sys.executable, "-X", "utf8", __file__, "--worker", m,
-             "--threads", str(args.threads)],
-            capture_output=True, text=True, encoding="utf-8",
-        )
-        line = next((l for l in p.stdout.splitlines() if l.startswith("RESULT_JSON ")), None)
-        if p.returncode or not line:
-            print(p.stdout, p.stderr, sep="\n")
-            sys.exit(f"worker for {m} failed")
-        results.append(json.loads(line[len("RESULT_JSON "):]))
+        for beam in args.beams:
+            print(f"=== {m}: benchmarking, {args.threads} threads, beam {beam} "
+                  f"({RUNS} runs per clip after warm-up) ===", flush=True)
+            p = subprocess.run(
+                # -X utf8: piped stdout is cp1252 on Windows otherwise; umlauts break decoding
+                [sys.executable, "-X", "utf8", __file__, "--worker", m,
+                 "--threads", str(args.threads), "--beam", str(beam)],
+                capture_output=True, text=True, encoding="utf-8",
+            )
+            line = next((l for l in p.stdout.splitlines() if l.startswith("RESULT_JSON ")), None)
+            if p.returncode or not line:
+                print(p.stdout, p.stderr, sep="\n")
+                sys.exit(f"worker for {m} (beam {beam}) failed")
+            results.append(json.loads(line[len("RESULT_JSON "):]))
 
     RESULTS.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print("\n" + "=" * 100)
-    print(f"{'model':<16}{'clip':<5}{'latency':>9}{'RTF':>7}{'CPU avg':>9}{'CPU peak':>10}"
+    print(f"{'model':<22}{'clip':<5}{'latency':>9}{'RTF':>7}{'CPU avg':>9}{'CPU peak':>10}"
           f"{'>=90%':>7}{'RAM peak':>10}{'load':>7}  lang")
     for r in results:
+        label = f"{r['model']} b{r['beam']}"
         for lang, c in r["clips"].items():
-            print(f"{r['model']:<16}{lang:<5}{c['latency_s']:>8.2f}s{c['rtf']:>7.2f}"
+            print(f"{label:<22}{lang:<5}{c['latency_s']:>8.2f}s{c['rtf']:>7.2f}"
                   f"{c['cpu_avg']:>8.0f}%{c['cpu_peak']:>9.0f}%{c['cpu_pinned_frac']*100:>6.0f}%"
                   f"{r['peak_wset_mb']:>8.0f}MB{r['load_s']:>6.1f}s  {c['detected']}")
     print("\nTranscripts:")
     for r in results:
         for lang, c in r["clips"].items():
-            print(f"  [{r['model']} / {lang}] {c['text']}")
+            print(f"  [{r['model']} b{r['beam']} / {lang}] {c['text']}")
     print(f"\nSaved to {RESULTS.name}")
     print("Rule: turbo only if latency < 2 s per 10 s clip AND CPU not pinned near 100 % for long.")
 

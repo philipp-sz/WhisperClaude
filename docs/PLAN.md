@@ -21,7 +21,7 @@ Why native Windows, not WSL: WSL can't see global hotkeys and can't type into Wi
 | Part | Library | Why |
 |---|---|---|
 | Speech-to-text | faster-whisper (CTranslate2), CPU, int8 | ~4× faster than openai-whisper on CPU, low RAM |
-| Model | large-v3-turbo (int8, ~0.8 GB) default; small as fallback | Benchmark decides |
+| Model | small, int8, beam_size=1, cpu_threads=4 | Decided by benchmark (step 1), see below |
 | Audio | sounddevice + numpy (16 kHz mono) | Simple, Windows wheels |
 | Hotkey | pynput GlobalHotKeys | System-wide on Windows |
 | Text insertion | Clipboard + simulated Ctrl+V (pyperclip + pynput), then restore old clipboard | Reliable for umlauts/Unicode, works in every app |
@@ -29,7 +29,20 @@ Why native Windows, not WSL: WSL can't see global hotkeys and can't type into Wi
 | Tray | pystray + Pillow | Menu: status, open log, quit |
 | Silence handling | faster-whisper vad_filter=True | Trims silence, reduces hallucinations |
 
-The model is loaded once at startup and kept warm (~1–1.5 GB RAM).
+The model is loaded once at startup and kept warm (~0.7 GB RAM for small).
+
+## Benchmark result (step 1, 2026-09-26)
+10 s clips, median of 3 warm runs. Timings vary ±20 % with power state (battery = throttled).
+
+| Config | Latency (10 s clip) | CPU | RAM | Note |
+|---|---|---|---|---|
+| small, 4 threads, beam 5 | 2.9 s (AC?) / 3.6–4.5 s (battery) | ~50 % | 0.7 GB | "Diktier Software", some commas missing |
+| small, 8 threads, beam 5 | 3.5 s | ~93 %, pinned | 0.7 GB | slower than 4 threads (P/E-core sync overhead) |
+| **small, 4 threads, beam 1** | **3.3–3.4 s (battery)** | ~49 % | 0.7 GB | **chosen**: ~10 % faster than beam 5, same quality |
+| medium, 4 / 8 threads | 15.5 s / 11 s (battery) | 48 % / 90 % | 1.8 GB | no better than small on German |
+| large-v3-turbo, 4 / 8 threads | 19–23 s / 13 s | 49 % / 91 % | 1.9 GB | best quality, far too slow on CPU |
+
+The < 2 s target is not reached on CPU. Best quality (turbo) needs the iGPU/NPU (OpenVINO, see Roadmap).
 
 ## Structure
 ```
@@ -64,7 +77,7 @@ WhisperClaude/
 Working rule: after each step, stop and report what was done: files changed, commands run, results, issues.
 
 0. Setup — DONE. venv, `pip install -e .[dev]`, env check passed (imports OK, CT2 int8 on CPU, mic detected; 8 cores, 33.8 GB RAM).
-1. scripts/benchmark.py + transcriber.py: benchmark small vs large-v3-turbo on a 10 s German and a 10 s English clip. Per model measure:
+1. DONE (→ small, beam 1, 4 threads). scripts/benchmark.py + transcriber.py: benchmark small vs large-v3-turbo on a 10 s German and a 10 s English clip. Per model measure:
    - latency (s) and real-time factor
    - peak and average CPU load (% of all cores, psutil sampling every 100 ms)
    - peak RAM of the process
