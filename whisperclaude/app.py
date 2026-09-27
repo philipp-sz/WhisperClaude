@@ -50,7 +50,7 @@ class App:
         transcriber: TranscriberLike,
         paste: Callable[[str], None],
         events: queue.Queue | None = None,
-        on_state: Callable[[State, str], None] | None = None,
+        on_state: Callable[[State, str], None] | None = None,  # msg = text to show the user
     ) -> None:
         self.recorder = recorder
         self.transcriber = transcriber
@@ -75,14 +75,17 @@ class App:
                 log.info("toggle ignored while transcribing")
         elif kind == DONE:
             text = str(payload or "")
-            if text:
-                try:
-                    self.paste(text)
-                except Exception as e:  # clipboard can be locked by another app
-                    log.exception("paste failed")
-                    self._set(State.IDLE, f"Paste failed: {e}")
-                    return
-            self._set(State.IDLE, text or "(nothing recognized)")
+            if not text:
+                self._set(State.IDLE, "Nothing recognized")
+                return
+            try:
+                self.paste(text)
+            except Exception as e:  # clipboard can be locked by another app
+                log.exception("paste failed")
+                self._set(State.IDLE, f"Paste failed: {e}")
+                return
+            log.info("pasted %d characters", len(text))  # not the text itself: privacy
+            self._set(State.IDLE)
         elif kind == ERROR:
             self._set(State.IDLE, f"Error: {payload}")
 
@@ -99,9 +102,9 @@ class App:
     def _stop_recording(self) -> None:
         audio = self.recorder.stop()
         if len(audio) < MIN_AUDIO_S * SAMPLE_RATE:
-            self._set(State.IDLE, "(too short)")
+            self._set(State.IDLE, "Too short")
             return
-        self._set(State.TRANSCRIBING, f"{len(audio) / SAMPLE_RATE:.1f} s audio")
+        self._set(State.TRANSCRIBING)
         threading.Thread(target=self._transcribe, args=(audio,), daemon=True).start()
 
     def _transcribe(self, audio: np.ndarray) -> None:
@@ -115,13 +118,16 @@ class App:
             log.exception("transcription failed")
             self.events.put((ERROR, str(e)))
 
-    def run(self) -> None:
-        """Blocking event loop (console version). Ends on a QUIT event or Ctrl+C."""
+    def process_pending(self) -> bool:
+        """Handle all queued events without blocking (called from the Tk loop).
+
+        Returns False once a QUIT event arrives.
+        """
         while True:
             try:
-                kind, payload = self.events.get(timeout=0.2)  # timeout keeps Ctrl+C responsive
+                kind, payload = self.events.get_nowait()
             except queue.Empty:
-                continue
+                return True
             if kind == QUIT:
-                return
+                return False
             self.handle(kind, payload)

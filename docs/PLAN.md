@@ -98,7 +98,7 @@ Working rule: after each step, stop and report what was done: files changed, com
    - model load time
    - Decision rule: use large-v3-turbo only if latency < 2 s for 10 s of audio AND the CPU isn't pinned near 100 % for long. Otherwise use small (battery, responsiveness). Report numbers to the user before deciding.
 2. recorder.py → inserter.py → hotkey.py: minimal console version working end-to-end.
-3. overlay.py + tray.py: switch to pythonw (no console).
+3. DONE. overlay.py + tray.py: switch to pythonw (no console). Also added: log file, single-instance mutex, offline model loading.
 4. install_autostart.py, logging, config file.
 5. Tests.
 

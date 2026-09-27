@@ -34,9 +34,11 @@ class Transcriber:
         self.language = language  # None = auto-detect
         self.initial_prompt = initial_prompt
         self.batch_size = batch_size
-        self.model = WhisperModel(
-            model, device="cpu", compute_type=compute_type, cpu_threads=cpu_threads
-        )
+        kwargs = dict(device="cpu", compute_type=compute_type, cpu_threads=cpu_threads)
+        try:  # cached model: no network request at startup (private, works offline)
+            self.model = WhisperModel(model, local_files_only=True, **kwargs)
+        except Exception:  # first run: download
+            self.model = WhisperModel(model, **kwargs)
         self.pipeline = BatchedInferencePipeline(self.model)
 
     def transcribe_detailed(self, audio: np.ndarray) -> tuple[str, str]:
