@@ -6,6 +6,14 @@ into whatever text field has focus: Word, the browser, chat apps, editors.
 
 Everything runs on your machine. Audio never leaves the laptop.
 
+<p align="center">
+  <img src="docs/images/demo.gif" alt="Status pill: loading, ready, recording with live level bars, transcribing" width="300">
+</p>
+
+> Built with [Claude Code](https://claude.com/claude-code): planning, benchmarks, code and
+> tests were developed in pair-programming sessions with Claude. Every decision and its
+> measurements are documented in [`docs/PLAN.md`](docs/PLAN.md).
+
 ## Features
 
 - **One key:** tap Left Ctrl alone to start/stop. Ctrl+C, Ctrl+click or Ctrl+scroll don't trigger it.
@@ -23,11 +31,22 @@ Everything runs on your machine. Audio never leaves the laptop.
 
 ## How it works
 
+```mermaid
+flowchart LR
+    A([Tap Left Ctrl]) --> B[Record mic<br/>16 kHz mono]
+    B --> C([Tap Left Ctrl])
+    C --> D[Voice activity detection<br/>cut at pauses, ≤ 30 s chunks]
+    D --> E{Intel GPU<br/>available?}
+    E -- yes --> F[Whisper large-v3-turbo<br/>iGPU via OpenVINO]
+    E -- no --> G[Whisper small<br/>CPU via faster-whisper]
+    F --> H[Text]
+    G --> H
+    H --> I[Clipboard + Ctrl+V<br/>into the focused app]
+    I --> J[Restore the<br/>old clipboard]
 ```
-Left Ctrl tap ─► record mic (16 kHz) ─► Left Ctrl tap ─► VAD: cut at pauses into ≤ 30 s chunks
-   ─► Whisper (iGPU via OpenVINO, or CPU via faster-whisper) with prompt + vocabulary
-   ─► clipboard ─► Ctrl+V into the focused app ─► restore old clipboard
-```
+
+Both backends get the same bilingual example prompt plus your vocabulary as "previous text",
+which steers punctuation and the spelling of names.
 
 ## Requirements
 
@@ -69,8 +88,12 @@ Then install the autostart. It registers a logon task and starts the app right a
 
 A tap during transcription is ignored. Recordings under 0.3 s are discarded.
 
-The tray icon (under the **^** arrow next to the clock) shows the state by color: grey = loading,
-green = ready, red = recording, amber = transcribing. Right-click for the menu.
+The tray icon (under the **^** arrow next to the clock) shows the state by color. Right-click
+for the menu (status incl. iGPU/CPU, open config, restart, open log, quit).
+
+<p align="center">
+  <img src="docs/images/tray-icons.png" alt="Tray icon states: grey loading, green ready, red recording, amber transcribing" width="320">
+</p>
 
 ## Configuration
 
@@ -126,11 +149,18 @@ iGPU model loaded. Details, including the benchmarks behind each decision, are i
 .venv\Scripts\python.exe -m pytest -m slow  # real models on CPU and (if present) iGPU
 ```
 
+The slow tests need two short clips of your own voice, which aren't part of the repo (all
+`*.wav` files are git-ignored). Record them once; the script shows the sentence to read:
+
+```powershell
+.venv\Scripts\python.exe scripts\record_clip.py speech_de --dir tests/data --say "Guten Morgen. Die Brötchen und der Käse sind sehr lecker."
+.venv\Scripts\python.exe scripts\record_clip.py speech_en --dir tests/data --say "Good morning. This is a short test of the dictation app."
+```
+
+Without them, those tests are skipped with this hint.
+
 Helper scripts in `scripts/`: `benchmark.py` (model speed), `record_clip.py` and
 `compare_decoding.py` (decoding quality on your own recordings), `check_env.py` (sanity check).
-
-The two short clips in `tests/data/` were generated with the Windows built-in text-to-speech
-voices, so the tests don't contain anyone's real voice.
 
 ## Third-party licenses
 

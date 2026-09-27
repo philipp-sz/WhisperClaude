@@ -1,4 +1,9 @@
-"""Real model on bundled clips (Windows text-to-speech, no personal voice). Opt-in: -m slow."""
+"""Real models on your own short clips. Opt-in: pytest -m slow.
+
+The clips aren't in the repo (no voices are committed). Record them once:
+  .venv\\Scripts\\python.exe scripts\\record_clip.py speech_de --dir tests/data --say "<SENTENCES de>"
+  .venv\\Scripts\\python.exe scripts\\record_clip.py speech_en --dir tests/data --say "<SENTENCES en>"
+"""
 import wave
 from pathlib import Path
 
@@ -6,10 +11,19 @@ import numpy as np
 import pytest
 
 DATA = Path(__file__).parent / "data"
+SENTENCES = {
+    "de": "Guten Morgen. Die Brötchen und der Käse sind sehr lecker.",
+    "en": "Good morning. This is a short test of the dictation app.",
+}
+KEYWORDS = {"de": ["morgen", "brötchen", "käse"], "en": ["morning", "test", "dictation"]}
 
 
-def load(name):
-    with wave.open(str(DATA / name), "rb") as w:
+def load(lang):
+    path = DATA / f"speech_{lang}.wav"
+    if not path.exists():
+        pytest.skip(f"{path.name} missing; record it: scripts\\record_clip.py speech_{lang} "
+                    f'--dir tests/data --say "{SENTENCES[lang]}"')
+    with wave.open(str(path), "rb") as w:
         assert w.getframerate() == 16_000 and w.getnchannels() == 1
         return np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768
 
@@ -25,14 +39,11 @@ def transcriber(request):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("clip, lang, words", [
-    ("speech_de.wav", "de", ["morgen", "brötchen", "käse"]),
-    ("speech_en.wav", "en", ["morning", "test", "dictation"]),
-])
-def test_transcribes_bundled_clip(transcriber, clip, lang, words):
-    text, detected = transcriber.transcribe_detailed(load(clip))
+@pytest.mark.parametrize("lang", ["de", "en"])
+def test_transcribes_recorded_clip(transcriber, lang):
+    text, detected = transcriber.transcribe_detailed(load(lang))
     assert detected == lang
-    for word in words:
+    for word in KEYWORDS[lang]:
         assert word in text.lower(), text
 
 

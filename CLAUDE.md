@@ -30,4 +30,6 @@ After each implementation step, stop and report: files changed, commands run, re
 - Threading: tkinter on the main thread, hotkey on pynput's thread, transcription + paste on a worker thread; communicate via `WakeQueue` (wakes Tk via a virtual event, no polling). Never block the Tk thread for long: the hotkey thread waits on it.
 - Settings live in `config.toml` (validated by `config.py`); logs in `%LOCALAPPDATA%\WhisperClaude\log.txt`. Never log transcript text (privacy).
 - Tests: pytest, lean. Mark model-loading tests `@pytest.mark.slow`.
-- Don't commit audio: `*.wav` is ignored except `tests/data/*.wav`, which are Windows text-to-speech clips. Never commit recordings of the user's voice or personal details (names, user paths, places).
+- Don't commit audio: all `*.wav` are git-ignored, including `tests/data/` (slow tests use clips the user records with `scripts/record_clip.py --dir tests/data`, else they skip). Never commit recordings of the user's voice or personal details (names, user paths, places).
+- OpenVINO's native threads block interpreter shutdown: the app (`__main__`) and pytest (`tests/conftest.py`) exit via `os._exit` once everything is done. Keep that when adding entry points.
+- README images live in `docs/images/` (demo.gif, tray-icons.png). Capture on a plain background window, never the real desktop.
