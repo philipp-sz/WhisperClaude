@@ -2,14 +2,14 @@
 
 ## Context
 A local, private clone of Wispr Flow for a Windows laptop (Intel Core Ultra 7 258V, 8 cores, iGPU + NPU, no dGPU).
-Press Ctrl+Alt+Space → speak → press again → the transcript is pasted into whatever text box has focus (Word, browser, Claude app).
+Tap Left Ctrl → speak → tap again → the transcript is pasted into whatever text box has focus (Word, browser, Claude app).
 The app starts silently at Windows login (tray icon). There's no terminal in daily use.
 Why native Windows, not WSL: WSL can't see global hotkeys and can't type into Windows apps.
 
 ## Decisions (from Q&A)
 | Topic | Choice |
 |---|---|
-| Hotkey | Ctrl+Alt+Space, toggle (press to start, press to stop) |
+| Hotkey | Tap Left Ctrl alone (< 0.5 s, no other key / mouse click / scroll in between), toggle. The laptop has no Right Ctrl. Was Ctrl+Alt+Space, but that opens Claude desktop's quick entry |
 | Language | German + English, auto-detect |
 | Cleanup / formatting | Not in v1. Planned for later (see Roadmap) |
 | Startup | Autostart at Windows login, tray app, no console |
@@ -22,8 +22,9 @@ Why native Windows, not WSL: WSL can't see global hotkeys and can't type into Wi
 |---|---|---|
 | Speech-to-text | faster-whisper (CTranslate2), CPU, int8 | ~4× faster than openai-whisper on CPU, low RAM |
 | Model | small, int8, beam_size=1, cpu_threads=4 | Decided by benchmark (step 1), see below |
+| Decoding | BatchedInferencePipeline (VAD cuts at pauses into ≤ 30 s chunks), without_timestamps, bilingual initial_prompt (batch_size=4) | See "Decoding comparison" below |
 | Audio | sounddevice + numpy (16 kHz mono) | Simple, Windows wheels |
-| Hotkey | pynput GlobalHotKeys | System-wide on Windows |
+| Hotkey | pynput Listener + own tap detection | System-wide on Windows |
 | Text insertion | Clipboard + simulated Ctrl+V (pyperclip + pynput), then restore old clipboard | Reliable for umlauts/Unicode, works in every app |
 | Overlay | tkinter borderless, topmost, WS_EX_NOACTIVATE (via ctypes) | No extra dependency, doesn't steal focus |
 | Tray | pystray + Pillow | Menu: status, open log, quit |
@@ -41,6 +42,19 @@ The model is loaded once at startup and kept warm (~0.7 GB RAM for small).
 | **small, 4 threads, beam 1** | **3.3–3.4 s (battery)** | ~49 % | 0.7 GB | **chosen**: ~10 % faster than beam 5, same quality |
 | medium, 4 / 8 threads | 15.5 s / 11 s (battery) | 48 % / 90 % | 1.8 GB | no better than small on German |
 | large-v3-turbo, 4 / 8 threads | 19–23 s / 13 s | 49 % / 91 % | 1.9 GB | best quality, far too slow on CPU |
+
+## Decoding comparison (2026-09-27, scripts/compare_decoding.py)
+Three real dictations with pauses: DE 63 s, EN 60 s, DE/EN mixed 33 s.
+
+| Variant | Result |
+|---|---|
+| A timestamps (old default) | EN: capital letter after every pause, no punctuation. Mixed: English part translated to German |
+| B without_timestamps | Loses/garbles text at the 30 s window boundary, hallucinated tail |
+| C timestamps + prompt | Better, still breaks at pauses |
+| D without_timestamps + prompt | Great punctuation, but still boundary errors > 30 s |
+| **E batched + prompt (chosen)** | Complete, well punctuated, languages kept. Only flaw: capital letter at a chunk start if the cut is mid-sentence. Same speed as A |
+
+Why: Whisper was trained on subtitles; timestamps split text at pauses and each "subtitle line" starts capitalized. The prompt sets the punctuation style and stops translation of mixed audio.
 
 The < 2 s target is not reached on CPU. Best quality (turbo) needs the iGPU/NPU (OpenVINO, see Roadmap).
 
@@ -70,7 +84,7 @@ WhisperClaude/
 - pynput thread: hotkey puts TOGGLE into the queue.
 - Worker thread: transcription, so the UI never freezes.
 - States: IDLE → RECORDING → TRANSCRIBING → IDLE. Toggle during TRANSCRIBING is ignored.
-- After stop: wait ~50 ms and release modifiers (Ctrl/Alt from the hotkey) before pasting.
+- Before pasting: wait until the user has physically released all modifiers (no fake key-ups: a synthetic Alt-up can open menus), then ~50 ms.
 - Errors (no mic, empty audio) show as a short overlay message and are logged to %LOCALAPPDATA%\WhisperClaude\log.txt.
 
 ## Implementation order
@@ -96,12 +110,13 @@ Working rule: after each step, stop and report what was done: files changed, com
 
 ## Verification (end-to-end)
 1. `python scripts/benchmark.py`: latency + peak RAM, pick model.
-2. `python -m whisperclaude`: Ctrl+Alt+Space in Notepad, Word, Chrome (claude.ai), Claude desktop app. German + English sentence, check text and umlauts.
+2. `python -m whisperclaude`: Left Ctrl tap in Notepad, Word, Chrome (claude.ai), Claude desktop app. German + English sentence, check text and umlauts.
 3. Clipboard content from before dictation is still there afterwards.
 4. install_autostart.py, reboot, hotkey works with no terminal opened.
 5. pytest.
 
 ## Roadmap (later, not v1)
+- Cleanup: also fix spacing when appending to existing text (dictation currently glues onto the previous word; the app can't see the text field's content).
 - Cleanup: remove filler words ("ähm") with a local LLM (llama-cpp-python + Qwen2.5-1.5B/3B Q4), once the benchmark shows remaining CPU/RAM.
 - Format mode: second hotkey that formats into bullets/paragraphs without changing wording (constrained prompt + diff check).
 - Speed-up: OpenVINO backend on the iGPU/NPU.

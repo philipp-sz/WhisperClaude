@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Local, private Wispr Flow clone for Windows: Ctrl+Alt+Space toggles recording, faster-whisper transcribes on CPU, the text is pasted into the focused app. Runs as a tray app at login.
+Local, private Wispr Flow clone for Windows: tapping Left Ctrl toggles recording, faster-whisper transcribes on CPU, the text is pasted into the focused app. Runs as a tray app at login.
 
 **Full plan, decisions and implementation order: [docs/PLAN.md](docs/PLAN.md). Read it before starting work.**
 

@@ -3,7 +3,7 @@ import logging
 import time
 
 from whisperclaude.app import App, State
-from whisperclaude.hotkey import DEFAULT_HOTKEY, start_hotkey_listener
+from whisperclaude.hotkey import start_hotkey_listener
 from whisperclaude.inserter import paste_text
 from whisperclaude.recorder import Recorder
 from whisperclaude.transcriber import Transcriber
@@ -23,7 +23,7 @@ def main() -> None:
 
     app = App(Recorder(), transcriber, paste_text, on_state=print_state)
     listener = start_hotkey_listener(app.events)
-    print(f"Ready. Press {DEFAULT_HOTKEY} to start/stop dictation. Ctrl+C here to quit.", flush=True)
+    print("Ready. Tap Left Ctrl to start/stop dictation. Ctrl+C here to quit.", flush=True)
     try:
         app.run()
     except KeyboardInterrupt:
