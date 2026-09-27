@@ -22,6 +22,7 @@ TOGGLE = "toggle"
 DONE = "done"    # payload: message for the user ("" = pasted fine)
 ERROR = "error"  # payload: message
 QUIT = "quit"
+RESTART = "restart"  # quit and start a new instance (applies config.toml changes)
 
 MIN_AUDIO_S = 0.3
 
@@ -74,6 +75,7 @@ class App:
         self.events: queue.Queue = events if events is not None else WakeQueue()
         self.on_state = on_state or (lambda state, msg: None)
         self.state = State.IDLE
+        self.exit_reason: str | None = None
         self._rec_started = 0.0
 
     def _set(self, state: State, msg: str = "") -> None:
@@ -140,13 +142,16 @@ class App:
     def process_pending(self) -> bool:
         """Handle all queued events without blocking (called from the Tk loop).
 
-        Returns False once a QUIT event arrives.
+        Returns False once QUIT or RESTART arrives; exit_reason then says which.
         """
         while True:
             try:
                 kind, payload = self.events.get_nowait()
             except queue.Empty:
                 return True
-            if kind == QUIT:
+            if kind in (QUIT, RESTART):
+                self.exit_reason = kind
+                if self.state is State.RECORDING:
+                    self.recorder.stop()  # release the mic
                 return False
             self.handle(kind, payload)

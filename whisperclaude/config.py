@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from whisperclaude.hotkey import parse_key
-from whisperclaude.transcriber import DEFAULT_PROMPT
+from whisperclaude.transcriber import DEFAULT_PROMPT, DEFAULT_VOCABULARY
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 COMPUTE_TYPES = {"int8", "int8_float32", "int16", "float32"}
@@ -43,8 +43,11 @@ class ModelConfig:
     batch_size: int = 4
     language: str = ""        # "" = auto-detect, else e.g. "de" / "en"
     initial_prompt: str = DEFAULT_PROMPT
+    vocabulary: tuple[str, ...] = DEFAULT_VOCABULARY  # words Whisper should spell exactly
 
     def __post_init__(self) -> None:
+        _check(all(isinstance(w, str) and w.strip() for w in self.vocabulary),
+               "[model] vocabulary must be a list of non-empty strings")
         _check(self.compute_type in COMPUTE_TYPES,
                f"[model] compute_type must be one of {sorted(COMPUTE_TYPES)}")
         for key in ("cpu_threads", "beam_size", "batch_size"):
@@ -73,7 +76,8 @@ SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "paste": PasteConfig}
 
 def _build(cls: type, raw: object, section: str):
     """Type-check one [section] against the dataclass defaults and construct it."""
-    _check(isinstance(raw, dict), f"[{section}] must be a table")
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[{section}] must be a table")
     defaults = cls()
     kwargs = {}
     for key, value in raw.items():
@@ -81,6 +85,8 @@ def _build(cls: type, raw: object, section: str):
         expected = type(getattr(defaults, key))
         if expected is float and type(value) is int:
             value = float(value)
+        if expected is tuple and type(value) is list:  # TOML arrays -> immutable tuple
+            value = tuple(value)
         _check(type(value) is expected,
                f"[{section}] {key}: expected {expected.__name__}, got {value!r}")
         kwargs[key] = value

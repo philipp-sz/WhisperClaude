@@ -25,6 +25,7 @@ class Recorder:
         self._chunks: list[np.ndarray] = []
         self._lock = threading.Lock()
         self._stream: sd.InputStream | None = None
+        self.level = 0.0  # RMS of the latest audio block, for the overlay's level bars
 
     @property
     def is_recording(self) -> bool:
@@ -33,8 +34,10 @@ class Recorder:
     def _callback(self, indata: np.ndarray, frames: int, time, status: sd.CallbackFlags) -> None:
         if status:
             log.warning("audio status: %s", status)
+        block = indata[:, 0].copy()
+        self.level = float(np.sqrt(np.mean(block * block))) if len(block) else 0.0
         with self._lock:
-            self._chunks.append(indata[:, 0].copy())
+            self._chunks.append(block)
 
     def start(self) -> None:
         """Open the mic and start collecting audio. Raises if no input device works."""
@@ -58,6 +61,7 @@ class Recorder:
         self._stream.stop()
         self._stream.close()
         self._stream = None
+        self.level = 0.0
         with self._lock:
             chunks, self._chunks = self._chunks, []
         if not chunks:

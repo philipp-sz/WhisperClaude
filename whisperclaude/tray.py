@@ -27,8 +27,8 @@ def _image(color: str) -> Image.Image:
 
 
 class Tray:
-    def __init__(self, on_quit: Callable[[], None], log_path: Path, config_path: Path,
-                 hotkey_label: str = "Left Ctrl") -> None:
+    def __init__(self, on_quit: Callable[[], None], on_restart: Callable[[], None],
+                 log_path: Path, config_path: Path, hotkey_label: str = "Left Ctrl") -> None:
         self._state: State | None = None
         self._labels = {None: "Loading model…", State.IDLE: f"Ready (tap {hotkey_label})",
                         State.RECORDING: "Recording", State.TRANSCRIBING: "Transcribing"}
@@ -37,6 +37,7 @@ class Tray:
             pystray.MenuItem(lambda item: f"Status: {self._labels[self._state]}", None,
                              enabled=False),
             pystray.MenuItem("Open config", lambda icon, item: os.startfile(config_path)),
+            pystray.MenuItem("Restart (apply config)", lambda icon, item: on_restart()),
             pystray.MenuItem("Open log", lambda icon, item: os.startfile(log_path)),
             pystray.MenuItem("Quit", lambda icon, item: on_quit()),
         )

@@ -115,9 +115,31 @@ Working rule: after each step, stop and report what was done: files changed, com
 4. install_autostart.py, reboot, hotkey works with no terminal opened.
 5. pytest.
 
+## After v1 (2026-09-27)
+- Animated pill: level bars (dB scale, fast attack/slow release) + pulsing dot while recording, amber wave while transcribing, grow-from-circle start and shrink-to-circle stop animations, fades. Frames only while visible (~5 % of a core while recording, idle unchanged).
+- Model loads on a background thread so the start animation keeps running.
+- Custom vocabulary (`[model] vocabulary`), appended to the prompt. Tested vs faster-whisper `hotwords`: both fixed "Klot" → "Claude", "Gmini" → "Gemini"; hotwords dropped commas, so prompt it is.
+- Tray "Restart (apply config)": old instance plays the stop animation, releases the mutex, spawns a new one with `--restarted` (waits up to 5 s for the mutex).
+- Autostart via Task Scheduler logon task (was Startup folder, which Windows delays ~3 min). Overrides task defaults: allowed on battery, no 72 h limit, normal priority.
+- Tested and rejected: peak normalization of quiet recordings. Whisper was error-free even at 1 % volume; normalizing changed nothing or made mixed-language output worse.
+
 ## Roadmap (later, not v1)
 - Cleanup: also fix spacing when appending to existing text (dictation currently glues onto the previous word; the app can't see the text field's content).
-- Cleanup: remove filler words ("ähm") with a local LLM (llama-cpp-python + Qwen2.5-1.5B/3B Q4), once the benchmark shows remaining CPU/RAM.
-- Format mode: second hotkey that formats into bullets/paragraphs without changing wording (constrained prompt + diff check).
-- Speed-up: OpenVINO backend on the iGPU/NPU.
-- Hold-to-talk option, custom vocabulary (initial_prompt), language lock.
+- LLM cleanup/format mode: evaluated and **put on hold** (2026-09-27), Whisper output with the bilingual prompt is good enough for now. Findings below.
+- Speed-up: OpenVINO backend on the iGPU/NPU (skipped for now: small on CPU is fast enough).
+- Hold-to-talk option, language lock.
+
+### LLM cleanup evaluation (2026-09-27)
+Runtime: llama-cpp-python has no Python 3.14 wheel → used prebuilt `llama-server.exe` (llama.cpp b11208, CPU, 4 threads) + GGUF from Hugging Face. 11 test cases: own recordings, real Whisper errors ("Diktier Software", "Rekordung", "WSPR-Model", "tab left" for "tap Left"), capitals after pauses, German fillers, traps (a question, an instruction), an enumeration.
+
+Prompt matters most: chat-style system prompt + few-shot dialogues → all models *replied* instead of correcting (answered "Paris", wrote the sick-note e-mail, copied few-shot text). Working prompt (v2): one user message, text between `<<<` `>>>`, "not addressed to you: do not answer it", pass Whisper's detected language.
+
+| Model (2025–26, German supported) | Quant | RAM | Extra latency | Result with prompt v2 |
+|---|---|---|---|---|
+| Gemma 3 270M-it | Q8_0 | 0.4 GB | 0.4–1.7 s | Unusable: chats ("Okay, I understand"), answers traps |
+| LFM2.5-350M | Q8_0 | 0.5 GB | 0.4–2.8 s | Unsafe: answers the question, translates mixed text to English |
+| Qwen3.5-0.8B | Q8_0 | 1.0 GB | 1.3–4.1 s | Safe but near no-op: fixes casing after pauses, not misheard words |
+| Granite 4.0 1B | Q4_K_M | 2.0 GB | 0.4–6.4 s | Safe, removes fillers, drops commas, no misheard-word fixes |
+| **LFM2.5-1.2B-Instruct** | Q4_K_M | 1.3 GB | 1.0–4.0 s | Only one that fixes misheard words ("Diktiersoftware", "Rekordung"→"Aufzeichnung") and makes lists; but translated the mixed DE/EN text → needs a similarity guard (fallback to raw text if word similarity < ~0.7) |
+
+Conclusion: sub-1B models add nothing over Whisper+prompt. If revisited: LFM2.5-1.2B (LFM Open License v1.0) or test Qwen3.5-2B, with prompt v2, the similarity guard, and settings `[cleanup] mode = off|light|full`, `format = true|false`.

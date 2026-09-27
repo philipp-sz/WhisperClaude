@@ -3,7 +3,7 @@ import threading
 
 import numpy as np
 
-from whisperclaude.app import QUIT, SAMPLE_RATE, TOGGLE, App, State, WakeQueue
+from whisperclaude.app import QUIT, RESTART, SAMPLE_RATE, TOGGLE, App, State, WakeQueue
 
 
 class FakeRecorder:
@@ -118,6 +118,14 @@ def test_process_pending_stops_on_quit():
     assert app.state is State.RECORDING
     app.events.put((QUIT, None))
     assert app.process_pending() is False
+    assert app.exit_reason == QUIT
+
+
+def test_restart_stops_with_reason():
+    app, _, _ = make_app()
+    app.events.put((RESTART, None))
+    assert app.process_pending() is False
+    assert app.exit_reason == RESTART
 
 
 def test_wake_queue_calls_wake_and_swallows_errors():

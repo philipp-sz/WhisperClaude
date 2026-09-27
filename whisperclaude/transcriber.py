@@ -1,6 +1,8 @@
 """faster-whisper wrapper: load the model once, transcribe 16 kHz mono float32 audio."""
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 from faster_whisper import BatchedInferencePipeline, WhisperModel
 
@@ -9,6 +11,18 @@ SAMPLE_RATE = 16_000
 # Correctly punctuated bilingual "previous text": Whisper copies its style. Fixes missing
 # punctuation, capitals after pauses, and German+English audio being translated to one language.
 DEFAULT_PROMPT = "Hallo, das ist ein Test. Okay, so let's see how this works, and then we'll decide."
+DEFAULT_VOCABULARY = ("Claude", "Gemini", "VS Code")
+
+
+def build_prompt(prompt: str | None, vocabulary: Sequence[str] = ()) -> str | None:
+    """Append custom words so Whisper spells them right ("Klot" -> "Claude").
+
+    Tested against faster-whisper's `hotwords`: same fixes, but hotwords cost commas.
+    """
+    words = ", ".join(w.strip() for w in vocabulary if w.strip())
+    if not words:
+        return prompt or None
+    return f"{prompt} {words}." if prompt else f"{words}."
 
 
 class Transcriber:
@@ -29,10 +43,11 @@ class Transcriber:
         cpu_threads: int = 4,
         initial_prompt: str | None = DEFAULT_PROMPT,
         batch_size: int = 4,
+        vocabulary: Sequence[str] = (),
     ) -> None:
         self.beam_size = beam_size
         self.language = language  # None = auto-detect
-        self.initial_prompt = initial_prompt
+        self.initial_prompt = build_prompt(initial_prompt, vocabulary)
         self.batch_size = batch_size
         kwargs = dict(device="cpu", compute_type=compute_type, cpu_threads=cpu_threads)
         try:  # cached model: no network request at startup (private, works offline)

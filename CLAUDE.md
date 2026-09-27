@@ -18,7 +18,7 @@ After each implementation step, stop and report: files changed, commands run, re
 .venv\Scripts\python.exe scripts\check_env.py     # sanity check: versions, compute types, mic
 .venv\Scripts\python.exe -m whisperclaude         # run with console + log output
 .venv\Scripts\pythonw.exe -m whisperclaude        # run without console (as autostart does)
-.venv\Scripts\python.exe scripts\install_autostart.py [--remove]   # login autostart
+.venv\Scripts\python.exe scripts\install_autostart.py [--remove]   # logon task (Task Scheduler)
 .venv\Scripts\python.exe scripts\benchmark.py     # model speed; record_clip.py + compare_decoding.py for quality
 .venv\Scripts\python.exe -m pytest                # fast tests (slow ones are deselected by default)
 .venv\Scripts\python.exe -m pytest -m slow        # loads a real Whisper model

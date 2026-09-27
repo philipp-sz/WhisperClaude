@@ -15,6 +15,9 @@ language = ""         # "" = auto-detect (German/English), or lock it: "de" / "e
 # Correctly punctuated example text; Whisper copies its style (punctuation, casing)
 # and it keeps mixed German/English audio from being translated into one language.
 initial_prompt = "Hallo, das ist ein Test. Okay, so let's see how this works, and then we'll decide."
+# Words Whisper should spell exactly as written (names, products, technical terms).
+# Fixed in tests: "Klot" -> "Claude", "Gmini" -> "Gemini". Keep the list short.
+vocabulary = ["Claude", "Gemini", "VS Code"]
 
 [paste]
 restore_delay_s = 0.3 # wait before restoring your old clipboard (raise if an app pastes the old text)

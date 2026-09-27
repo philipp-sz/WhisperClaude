@@ -27,7 +27,15 @@ def test_valid_overrides(tmp_path):
     assert cfg.model.name == "small"  # untouched default
 
 
+def test_vocabulary_list_becomes_tuple(tmp_path):
+    cfg = load_config(write(tmp_path, '[model]\nvocabulary = ["Claude", "VS Code"]\n'))
+    assert cfg.model.vocabulary == ("Claude", "VS Code")
+
+
 @pytest.mark.parametrize("text, message", [
+    ('[model]\nvocabulary = "Claude"', "expected tuple"),
+    ('[model]\nvocabulary = ["Claude", ""]', "vocabulary must be"),
+    ('[model]\nvocabulary = ["Claude", 3]', "vocabulary must be"),
     ('[model]\ncpu_threads = 0', "cpu_threads must be 1"),
     ('[model]\ncpu_threads = "4"', "expected int"),
     ('[model]\nbeam_size = true', "expected int"),
