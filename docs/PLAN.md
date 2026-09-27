@@ -121,6 +121,16 @@ Working rule: after each step, stop and report what was done: files changed, com
 - Custom vocabulary (`[model] vocabulary`), appended to the prompt. Tested vs faster-whisper `hotwords`: both fixed "Klot" → "Claude", "Gmini" → "Gemini"; hotwords dropped commas, so prompt it is.
 - Tray "Restart (apply config)": old instance plays the stop animation, releases the mutex, spawns a new one with `--restarted` (waits up to 5 s for the mutex).
 - Autostart via Task Scheduler logon task (was Startup folder, which Windows delays ~3 min). Overrides task defaults: allowed on battery, no 72 h limit, normal priority.
+- **iGPU backend (OpenVINO GenAI)**: `[model] device = "auto"` uses large-v3-turbo on the Intel Arc 140V iGPU if OpenVINO sees a GPU, else (or on any load error) faster-whisper small on the CPU. Pre-converted `OpenVINO/whisper-*-int8-ov` models; compiled kernels cached in `%LOCALAPPDATA%\WhisperClaude\ov_cache` (first start ~15 s, then < 1 s). Same VAD chunking (faster-whisper's `get_speech_timestamps` + `collect_chunks`, ≤ 30 s, no timestamps) and prompt on both paths. NPU: crashes in OpenVINO 2026.4 WhisperPipeline, not used.
+
+| Backend (10 s / 60 s audio) | Latency | CPU time per 10 s | Energy per 60 s dictation (battery) | Quality |
+|---|---|---|---|---|
+| faster-whisper small, CPU | 3.6 s / 6.9 s | 13.6 s | ~38 J | reference |
+| OpenVINO small, iGPU | 0.26 s / 1.5 s | 0.4 s | ~19 J | on par |
+| **OpenVINO large-v3-turbo, iGPU (chosen)** | 0.33 s / 1.5 s | 0.4 s | ~19 J | better ("Diktiersoftware", casing) |
+
+Idle: OpenVINO keeps ~1 % of a core busy (GPU driver threads; no plugin property removes it, releasing the model doesn't either), but battery draw at idle was unmeasurable vs. CPU backend or no app (7.6–8.0 W, ±0.3 W noise), so the model stays loaded. Exit uses `os._exit` after a clean shutdown because those native threads kept a restarted instance alive as a zombie.
+- Vocabulary: added "cloud" next to "Claude" (tested: both then transcribed correctly, and it fixed "in the Cloud" capitalization), "iGPU".
 - Tested and rejected: peak normalization of quiet recordings. Whisper was error-free even at 1 % volume; normalizing changed nothing or made mixed-language output worse.
 
 ## Roadmap (later, not v1)

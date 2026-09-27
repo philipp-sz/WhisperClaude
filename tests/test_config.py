@@ -24,7 +24,7 @@ def test_valid_overrides(tmp_path):
     assert cfg.hotkey.key == "f9"
     assert cfg.hotkey.max_hold_s == 1.0  # int accepted for float
     assert cfg.model.language == "de"
-    assert cfg.model.name == "small"  # untouched default
+    assert cfg.model.cpu_model == "small"  # untouched default
 
 
 def test_vocabulary_list_becomes_tuple(tmp_path):
@@ -40,6 +40,8 @@ def test_vocabulary_list_becomes_tuple(tmp_path):
     ('[model]\ncpu_threads = "4"', "expected int"),
     ('[model]\nbeam_size = true', "expected int"),
     ('[model]\ncompute_type = "int4"', "compute_type"),
+    ('[model]\ndevice = "npu"', "device must be"),
+    ('[model]\nname = "small"', "unknown key 'name'"),  # renamed to cpu_model
     ('[model]\nlanguage = "deu"', "language"),
     ('[hotkey]\nkey = "ctrl_x"', "unknown key"),
     ('[hotkey]\nmax_hold_s = 10', "max_hold_s"),

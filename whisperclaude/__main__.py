@@ -15,7 +15,7 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypeVar
 
 from whisperclaude.app import QUIT, RESTART, App, State, WakeQueue
 from whisperclaude.config import CONFIG_PATH, Config, ConfigError, load_config
@@ -23,12 +23,13 @@ from whisperclaude.hotkey import key_label, parse_key, start_hotkey_listener
 from whisperclaude.inserter import paste_text
 from whisperclaude.overlay import Overlay, enable_dpi_awareness
 from whisperclaude.recorder import Recorder
-from whisperclaude.transcriber import Transcriber
+from whisperclaude.transcriber import create_transcriber
 from whisperclaude.tray import Tray
 
 log = logging.getLogger("whisperclaude")
 BACKUP_POLL_MS = 1000  # safety net only; normally the queue wakes Tk via a virtual event
 WAKE_EVENT = "<<WhisperClaudeWake>>"
+T = TypeVar("T")
 RESTARTED_FLAG = "--restarted"  # passed by Restart: wait for the old instance to exit
 
 
@@ -85,21 +86,28 @@ def spawn_new_instance() -> None:
                       RESTARTED_FLAG], cwd=CONFIG_PATH.parent, creationflags=flags, close_fds=True)
 
 
-def load_in_background(root: tk.Tk, load: Callable[[], Transcriber]) -> Transcriber:
-    """Load the model on a thread while Tk keeps running, so the start animation plays.
+def load_in_background(root: tk.Tk, load: Callable[[Callable[[str], None]], T],
+                       on_status: Callable[[str], None]) -> T:
+    """Run load(report_status) on a thread while Tk keeps running, so the start animation
+    plays. Status texts from the thread are shown via on_status on the Tk thread.
 
     Re-raises the loader's exception."""
     result: dict[str, object] = {}
+    status: list[str] = []  # appended by the loader thread, read here
 
     def run() -> None:
         try:
-            result["value"] = load()
+            result["value"] = load(status.append)
         except Exception as e:
             result["error"] = e
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    while thread.is_alive():  # only during startup (~2 s)
+    shown = 0
+    while thread.is_alive():  # only during startup (~1 s, first GPU start ~15 s)
+        if len(status) > shown:
+            shown = len(status)
+            on_status(status[-1])
         root.update()
         time.sleep(0.015)
     if "error" in result:
@@ -140,14 +148,14 @@ def main() -> None:
     overlay.show_starting("Loading model…")
     m = cfg.model
     try:
-        transcriber = load_in_background(root, lambda: Transcriber(
-            model=m.name, compute_type=m.compute_type, beam_size=m.beam_size,
-            language=m.language or None, cpu_threads=m.cpu_threads,
-            initial_prompt=m.initial_prompt or None, batch_size=m.batch_size,
-            vocabulary=m.vocabulary,
-        ))
+        transcriber = load_in_background(root, lambda report: create_transcriber(
+            device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model, on_status=report,
+            language=m.language or None, initial_prompt=m.initial_prompt or None,
+            vocabulary=m.vocabulary, compute_type=m.compute_type, beam_size=m.beam_size,
+            cpu_threads=m.cpu_threads, batch_size=m.batch_size,
+        ), overlay.set_starting_text)
     except Exception:
-        log.exception("could not load model %r", m.name)
+        log.exception("could not load a model")
         overlay.show_message("Could not load model – see log", seconds=None)
         root.after(5000, root.destroy)
         root.mainloop()
@@ -164,12 +172,13 @@ def main() -> None:
     app = App(recorder, transcriber, paste, events, on_state)
     listener = start_hotkey_listener(events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s)
     signal.signal(signal.SIGINT, lambda *_: request_quit())  # Ctrl+C in the console
+    tray.engine = "iGPU" if transcriber.device == "GPU" else "CPU"
     tray.set_state(State.IDLE)
     if config_error:
         overlay.show_message(config_error, seconds=6)
     else:
         overlay.show_ready(f"Ready – tap {hotkey}")
-    log.info("ready (model %s, hotkey %s)", m.name, cfg.hotkey.key)
+    log.info("ready (%s on %s, hotkey %s)", type(transcriber).__name__, transcriber.device, cfg.hotkey.key)
 
     stopped = False
 
@@ -206,3 +215,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # OpenVINO's native worker threads can keep the process alive after the window is gone
+    # (seen after Restart: a zombie instance holding ~1.2 GB). Everything is shut down at
+    # this point, so flush the log and exit hard.
+    logging.shutdown()
+    os._exit(0)

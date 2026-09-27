@@ -9,6 +9,7 @@ description = "Local push-a-hotkey dictation for Windows (Wispr Flow clone)."
 requires-python = ">=3.12"
 dependencies = [
     "faster-whisper>=1.2",
+    "openvino-genai>=2026.4",  # Intel iGPU backend (falls back to CPU without it)
     "numpy",
     "sounddevice",
     "pynput",

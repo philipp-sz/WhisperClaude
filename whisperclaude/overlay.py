@@ -112,6 +112,7 @@ class Overlay:
         self._w = self.h
         self._dot: int | None = None
         self._label: int | None = None
+        self._start_target = float(self.h)
 
         # The very first show activates the window (before our styles apply);
         # hand focus straight back to whatever had it.
@@ -283,16 +284,25 @@ class Overlay:
         self._dot = dot = self._make_dot(GREY)
         tx = self.pad + self.dot_d + self.gap
         self._label = label = self._text(tx, text, BG)
-        target = tx + self.font.measure(text) + self.pad
+        self._start_target = tx + self.font.measure(text) + self.pad
         self._set_width(self.h)
         self._fade(ALPHA, ms=200)
 
         def frame(t: float) -> None:
-            self._set_width(self.h + (target - self.h) * _ease_out(min(1.0, t / 0.45)))
+            grow = _ease_out(min(1.0, t / 0.45))
+            w = self.h + (self._start_target - self.h) * grow
+            self._set_width(w if grow < 1 else self._w + (self._start_target - self._w) * 0.3)
             self.canvas.itemconfig(label, fill=_mix(BG, FG, (t - 0.3) / 0.25))
             self._place_dot(dot, self.dot_d / 2 * (0.55 + 0.45 * abs(math.sin(t * 3))))
 
         self._animate(frame)
+
+    def set_starting_text(self, text: str) -> None:
+        """Change the start-animation text (e.g. "Preparing GPU…"); the pill glides to fit."""
+        if self._label is None:
+            return
+        self.canvas.itemconfig(self._label, text=text)
+        self._start_target = self.pad + self.dot_d + self.gap + self.font.measure(text) + self.pad
 
     def show_ready(self, text: str, seconds: float = MESSAGE_S) -> None:
         """Second half of the start animation: dot turns green with a pop, pill resizes."""

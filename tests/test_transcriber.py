@@ -14,10 +14,14 @@ def load(name):
         return np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768
 
 
-@pytest.fixture(scope="module")
-def transcriber():
-    from whisperclaude.transcriber import Transcriber
-    return Transcriber()
+@pytest.fixture(scope="module", params=["cpu", "gpu"])
+def transcriber(request):
+    from whisperclaude import transcriber as t
+    if request.param == "cpu":
+        return t.Transcriber()
+    if not t.gpu_available():
+        pytest.skip("no OpenVINO GPU")
+    return t.OpenVinoTranscriber()
 
 
 @pytest.mark.slow

@@ -1,12 +1,15 @@
 # WhisperClaude settings. Every key is optional (missing = default shown here).
-# Changes apply after restarting the app (tray icon -> Quit, then start it again).
+# Changes apply after a restart: tray icon -> "Restart (apply config)".
 
 [hotkey]
 key = "ctrl_l"        # tap alone to start/stop: "ctrl_l", "ctrl_r", "f9", "pause", ...
 max_hold_s = 0.5      # holding the key longer than this doesn't count as a tap
 
 [model]
-name = "small"        # "small" (fast) / "medium" / "large-v3-turbo" (better, ~4-6x slower on CPU)
+device = "auto"       # "auto" = Intel iGPU via OpenVINO if available, else CPU | "gpu" | "cpu"
+gpu_model = "large-v3-turbo"  # on the iGPU: ~0.3 s per 10 s audio, ~half the energy of the CPU path
+cpu_model = "small"   # CPU fallback (faster-whisper): "small" (fast) / "large-v3-turbo" (~5x slower)
+# The following four only apply to the CPU path:
 compute_type = "int8"
 cpu_threads = 4       # 8 was slower for small (P/E-core mix), see docs/PLAN.md
 beam_size = 1         # 5 = slightly different results, ~10 % slower
@@ -16,8 +19,9 @@ language = ""         # "" = auto-detect (German/English), or lock it: "de" / "e
 # and it keeps mixed German/English audio from being translated into one language.
 initial_prompt = "Hallo, das ist ein Test. Okay, so let's see how this works, and then we'll decide."
 # Words Whisper should spell exactly as written (names, products, technical terms).
-# Fixed in tests: "Klot" -> "Claude", "Gmini" -> "Gemini". Keep the list short.
-vocabulary = ["Claude", "Gemini", "VS Code"]
+# Fixed in tests: "Klot" -> "Claude", "Gmini" -> "Gemini"; "cloud" + "Claude" together work.
+# Keep the list short (it shares ~220 tokens with the prompt).
+vocabulary = ["Claude", "cloud", "Gemini", "VS Code", "iGPU"]
 
 [paste]
 restore_delay_s = 0.3 # wait before restoring your old clipboard (raise if an app pastes the old text)

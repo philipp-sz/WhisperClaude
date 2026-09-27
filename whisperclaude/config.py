@@ -10,6 +10,7 @@ from whisperclaude.transcriber import DEFAULT_PROMPT, DEFAULT_VOCABULARY
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 COMPUTE_TYPES = {"int8", "int8_float32", "int16", "float32"}
+DEVICES = {"auto", "gpu", "cpu"}
 
 
 class ConfigError(ValueError):
@@ -36,7 +37,9 @@ class HotkeyConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    name: str = "small"
+    device: str = "auto"              # "auto" = iGPU if available, else CPU | "gpu" | "cpu"
+    gpu_model: str = "large-v3-turbo"  # OpenVINO model on the iGPU
+    cpu_model: str = "small"           # faster-whisper model on the CPU (fallback)
     compute_type: str = "int8"
     cpu_threads: int = 4
     beam_size: int = 1
@@ -46,6 +49,7 @@ class ModelConfig:
     vocabulary: tuple[str, ...] = DEFAULT_VOCABULARY  # words Whisper should spell exactly
 
     def __post_init__(self) -> None:
+        _check(self.device in DEVICES, f"[model] device must be one of {sorted(DEVICES)}")
         _check(all(isinstance(w, str) and w.strip() for w in self.vocabulary),
                "[model] vocabulary must be a list of non-empty strings")
         _check(self.compute_type in COMPUTE_TYPES,

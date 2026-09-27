@@ -30,12 +30,12 @@ class Tray:
     def __init__(self, on_quit: Callable[[], None], on_restart: Callable[[], None],
                  log_path: Path, config_path: Path, hotkey_label: str = "Left Ctrl") -> None:
         self._state: State | None = None
+        self.engine = ""  # "iGPU" / "CPU", set once the model is loaded
         self._labels = {None: "Loading model…", State.IDLE: f"Ready (tap {hotkey_label})",
                         State.RECORDING: "Recording", State.TRANSCRIBING: "Transcribing"}
         self._images = {s: _image(c) for s, c in COLORS.items()}
         menu = pystray.Menu(
-            pystray.MenuItem(lambda item: f"Status: {self._labels[self._state]}", None,
-                             enabled=False),
+            pystray.MenuItem(lambda item: f"Status: {self._status()}", None, enabled=False),
             pystray.MenuItem("Open config", lambda icon, item: os.startfile(config_path)),
             pystray.MenuItem("Restart (apply config)", lambda icon, item: on_restart()),
             pystray.MenuItem("Open log", lambda icon, item: os.startfile(log_path)),
@@ -44,13 +44,17 @@ class Tray:
         self.icon = pystray.Icon("WhisperClaude", self._images[None],
                                  f"WhisperClaude – {self._labels[None]}", menu)
 
+    def _status(self) -> str:
+        label = self._labels[self._state]
+        return f"{label} · {self.engine}" if self.engine else label
+
     def start(self) -> None:
         self.icon.run_detached()
 
     def set_state(self, state: State, msg: str = "") -> None:
         self._state = state
         self.icon.icon = self._images[state]
-        self.icon.title = f"WhisperClaude – {self._labels[state]}"
+        self.icon.title = f"WhisperClaude – {self._status()}"
         self.icon.update_menu()
 
     def stop(self) -> None:

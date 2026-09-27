@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Local, private Wispr Flow clone for Windows: tapping Left Ctrl toggles recording, faster-whisper transcribes on CPU, the text is pasted into the focused app. Runs as a tray app at login.
+Local, private Wispr Flow clone for Windows: tapping Left Ctrl toggles recording, Whisper transcribes locally (iGPU via OpenVINO, CPU fallback), the text is pasted into the focused app. Runs as a tray app at login.
 
 **Full plan, decisions and implementation order: [docs/PLAN.md](docs/PLAN.md). Read it before starting work.**
 
@@ -11,7 +11,7 @@ After each implementation step, stop and report: files changed, commands run, re
 - Native Windows (not WSL — WSL can't see global hotkeys or type into Windows apps). Shell: PowerShell.
 - Python 3.14 in `.venv`. Installed editable: `pip install -e .[dev]`.
 - Use the venv interpreter: `.venv\Scripts\python.exe`.
-- CPU only (Intel Core Ultra 7 258V, 8 cores, 33.8 GB RAM). CTranslate2 int8 is supported.
+- Intel Core Ultra 7 258V (8 cores, 33.8 GB RAM), Intel Arc 140V iGPU, NPU. Default backend: OpenVINO GenAI (large-v3-turbo) on the iGPU; fallback: faster-whisper (small, CTranslate2 int8) on the CPU. See `create_transcriber()`.
 
 ## Commands
 ```powershell
