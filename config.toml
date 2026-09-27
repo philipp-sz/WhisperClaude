@@ -1,0 +1,20 @@
+# WhisperClaude settings. Every key is optional (missing = default shown here).
+# Changes apply after restarting the app (tray icon -> Quit, then start it again).
+
+[hotkey]
+key = "ctrl_l"        # tap alone to start/stop: "ctrl_l", "ctrl_r", "f9", "pause", ...
+max_hold_s = 0.5      # holding the key longer than this doesn't count as a tap
+
+[model]
+name = "small"        # "small" (fast) / "medium" / "large-v3-turbo" (better, ~4-6x slower on CPU)
+compute_type = "int8"
+cpu_threads = 4       # 8 was slower for small (P/E-core mix), see docs/PLAN.md
+beam_size = 1         # 5 = slightly different results, ~10 % slower
+batch_size = 4
+language = ""         # "" = auto-detect (German/English), or lock it: "de" / "en"
+# Correctly punctuated example text; Whisper copies its style (punctuation, casing)
+# and it keeps mixed German/English audio from being translated into one language.
+initial_prompt = "Hallo, das ist ein Test. Okay, so let's see how this works, and then we'll decide."
+
+[paste]
+restore_delay_s = 0.3 # wait before restoring your old clipboard (raise if an app pastes the old text)

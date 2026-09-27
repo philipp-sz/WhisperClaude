@@ -16,6 +16,10 @@ After each implementation step, stop and report: files changed, commands run, re
 ## Commands
 ```powershell
 .venv\Scripts\python.exe scripts\check_env.py     # sanity check: versions, compute types, mic
+.venv\Scripts\python.exe -m whisperclaude         # run with console + log output
+.venv\Scripts\pythonw.exe -m whisperclaude        # run without console (as autostart does)
+.venv\Scripts\python.exe scripts\install_autostart.py [--remove]   # login autostart
+.venv\Scripts\python.exe scripts\benchmark.py     # model speed; record_clip.py + compare_decoding.py for quality
 .venv\Scripts\python.exe -m pytest -m "not slow"  # fast tests
 .venv\Scripts\python.exe -m pytest -m slow        # loads a real Whisper model
 ```
@@ -23,6 +27,7 @@ After each implementation step, stop and report: files changed, commands run, re
 ## Conventions
 - Package: `whisperclaude/`, one module per concern (recorder, transcriber, inserter, hotkey, overlay, tray, config).
 - Type hints + short docstrings in package code; scripts can be minimal.
-- Threading: tkinter on the main thread, hotkey on pynput's thread, transcription on a worker thread; communicate via a queue.
+- Threading: tkinter on the main thread, hotkey on pynput's thread, transcription + paste on a worker thread; communicate via `WakeQueue` (wakes Tk via a virtual event, no polling). Never block the Tk thread for long: the hotkey thread waits on it.
+- Settings live in `config.toml` (validated by `config.py`); logs in `%LOCALAPPDATA%\WhisperClaude\log.txt`. Never log transcript text (privacy).
 - Tests: pytest, lean. Mark model-loading tests `@pytest.mark.slow`.
 - Don't commit audio: `*.wav` is ignored except `tests/data/*.wav`.

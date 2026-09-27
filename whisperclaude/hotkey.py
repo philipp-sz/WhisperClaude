@@ -55,11 +55,28 @@ class TapDetector:
         return not self._interrupted and held <= self.max_hold
 
 
+def parse_key(name: str) -> Key | KeyCode:
+    """Config name -> pynput key: 'ctrl_l', 'ctrl_r', 'f9', 'pause', ... or a single character."""
+    if name in Key.__members__:
+        return Key[name]
+    if len(name) == 1:
+        return KeyCode.from_char(name)
+    raise ValueError(f"unknown key {name!r} (use e.g. 'ctrl_l', 'ctrl_r', 'f9', 'pause')")
+
+
+def key_label(name: str) -> str:
+    """Human-readable key name for the UI."""
+    labels = {"ctrl_l": "Left Ctrl", "ctrl_r": "Right Ctrl", "alt_l": "Left Alt",
+              "shift_r": "Right Shift", "caps_lock": "Caps Lock"}
+    return labels.get(name, name.replace("_", " ").title())
+
+
 class HotkeyListener:
     """Keyboard + mouse listeners (pynput threads) feeding one TapDetector."""
 
-    def __init__(self, events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY) -> None:
-        tap = TapDetector(key)
+    def __init__(self, events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,
+                 max_hold: float = MAX_HOLD_S) -> None:
+        tap = TapDetector(key, max_hold)
 
         def on_release(k: Key | KeyCode | None) -> None:
             if tap.release(k):
@@ -79,6 +96,7 @@ class HotkeyListener:
         self._mouse.stop()
 
 
-def start_hotkey_listener(events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY) -> HotkeyListener:
+def start_hotkey_listener(events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,
+                          max_hold: float = MAX_HOLD_S) -> HotkeyListener:
     """Start listening. Call .stop() on the result to end it."""
-    return HotkeyListener(events, key)
+    return HotkeyListener(events, key, max_hold)

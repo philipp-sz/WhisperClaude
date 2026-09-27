@@ -1,21 +1,22 @@
 """Entry point: python -m whisperclaude (console) or pythonw -m whisperclaude (no console).
 
-Main thread: Tk (overlay) polls the event queue. pynput threads: hotkey. Worker: transcription.
-pystray: tray icon in its own thread.
+Main thread: Tk (overlay) sleeps until the event queue wakes it. pynput threads: hotkey.
+Worker: transcription + paste. pystray: tray icon in its own thread.
 """
 import ctypes
+import functools
 import logging
 import logging.handlers
 import os
-import queue
 import signal
 import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 
-from whisperclaude.app import QUIT, App, State
-from whisperclaude.hotkey import start_hotkey_listener
+from whisperclaude.app import QUIT, App, State, WakeQueue
+from whisperclaude.config import CONFIG_PATH, Config, ConfigError, load_config
+from whisperclaude.hotkey import key_label, parse_key, start_hotkey_listener
 from whisperclaude.inserter import paste_text
 from whisperclaude.overlay import Overlay, enable_dpi_awareness
 from whisperclaude.recorder import Recorder
@@ -23,7 +24,8 @@ from whisperclaude.transcriber import Transcriber
 from whisperclaude.tray import Tray
 
 log = logging.getLogger("whisperclaude")
-POLL_MS = 50
+BACKUP_POLL_MS = 1000  # safety net only; normally the queue wakes Tk via a virtual event
+WAKE_EVENT = "<<WhisperClaudeWake>>"
 
 
 def setup_logging() -> Path:
@@ -65,49 +67,77 @@ def main() -> None:
         log.warning("already running, exiting")
         return
 
+    config_error = ""
+    try:
+        cfg = load_config()
+    except ConfigError as e:
+        log.error("config error, using defaults: %s", e)
+        cfg, config_error = Config(), "Config error – using defaults (see log)"
+
     enable_dpi_awareness()
     root = tk.Tk()
     root.report_callback_exception = lambda *exc: log.error("error in Tk callback", exc_info=exc)
     overlay = Overlay(root)
-    events: queue.Queue = queue.Queue()
+    events = WakeQueue()
 
     def request_quit() -> None:  # thread-safe: tray thread, signal handler
         events.put((QUIT, None))
 
-    tray = Tray(on_quit=request_quit, log_path=log_path)
+    hotkey = key_label(cfg.hotkey.key)
+    tray = Tray(request_quit, log_path, CONFIG_PATH, hotkey)
     tray.start()
 
     overlay.show_message("Loading model…", seconds=None)
     root.update()
+    m = cfg.model
     try:
-        transcriber = Transcriber()
+        transcriber = Transcriber(
+            model=m.name, compute_type=m.compute_type, beam_size=m.beam_size,
+            language=m.language or None, cpu_threads=m.cpu_threads,
+            initial_prompt=m.initial_prompt or None, batch_size=m.batch_size,
+        )
     except Exception:
-        log.exception("could not load model")
+        log.exception("could not load model %r", m.name)
+        overlay.show_message("Could not load model – see log", seconds=None)
+        root.after(5000, root.destroy)
+        root.mainloop()
         tray.stop()
-        root.destroy()
         return
 
     def on_state(state: State, msg: str = "") -> None:
         overlay.set_state(state, msg)
         tray.set_state(state, msg)
 
-    app = App(Recorder(), transcriber, paste_text, events, on_state)
-    listener = start_hotkey_listener(events)
+    paste = functools.partial(paste_text, restore_delay=cfg.paste.restore_delay_s)
+    app = App(Recorder(), transcriber, paste, events, on_state)
+    listener = start_hotkey_listener(events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s)
     signal.signal(signal.SIGINT, lambda *_: request_quit())  # Ctrl+C in the console
     tray.set_state(State.IDLE)
-    overlay.show_message("Ready – tap Left Ctrl")
-    log.info("ready")
+    overlay.show_message(config_error or f"Ready – tap {hotkey}", seconds=6 if config_error else 2.5)
+    log.info("ready (model %s, hotkey %s)", m.name, cfg.hotkey.key)
+
+    stopped = False
 
     def pump() -> None:
-        if app.process_pending():
-            root.after(POLL_MS, pump)
+        nonlocal stopped
+        if stopped or app.process_pending():
             return
+        stopped = True
         log.info("quitting")
+        events.wake = lambda: None
         listener.stop()
         tray.stop()
         root.destroy()
 
-    root.after(POLL_MS, pump)
+    def backup_poll() -> None:
+        pump()
+        if not stopped:
+            root.after(BACKUP_POLL_MS, backup_poll)
+
+    # Other threads put events -> generate a Tk virtual event -> pump runs on the Tk thread.
+    root.bind(WAKE_EVENT, lambda e: pump())
+    events.wake = lambda: root.event_generate(WAKE_EVENT, when="tail")
+    root.after(BACKUP_POLL_MS, backup_poll)
     root.mainloop()
 
 

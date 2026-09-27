@@ -19,11 +19,27 @@ log = logging.getLogger(__name__)
 
 # Event kinds (queue items are (kind, payload) tuples)
 TOGGLE = "toggle"
-DONE = "done"    # payload: transcript text
+DONE = "done"    # payload: message for the user ("" = pasted fine)
 ERROR = "error"  # payload: message
 QUIT = "quit"
 
 MIN_AUDIO_S = 0.3
+
+
+class WakeQueue(queue.Queue):
+    """Queue that calls wake() after each put, so the consumer can sleep instead of polling
+    (polling every 50 ms cost ~0.8 % of a core while idle)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.wake: Callable[[], None] = lambda: None
+
+    def put(self, item, block: bool = True, timeout: float | None = None) -> None:
+        super().put(item, block, timeout)
+        try:
+            self.wake()
+        except Exception:  # consumer not ready (Tk not in mainloop yet / shut down)
+            pass           # -> the consumer's slow backup poll picks the item up
 
 
 class State(enum.Enum):
@@ -55,7 +71,7 @@ class App:
         self.recorder = recorder
         self.transcriber = transcriber
         self.paste = paste
-        self.events: queue.Queue = events if events is not None else queue.Queue()
+        self.events: queue.Queue = events if events is not None else WakeQueue()
         self.on_state = on_state or (lambda state, msg: None)
         self.state = State.IDLE
         self._rec_started = 0.0
@@ -74,18 +90,7 @@ class App:
             else:
                 log.info("toggle ignored while transcribing")
         elif kind == DONE:
-            text = str(payload or "")
-            if not text:
-                self._set(State.IDLE, "Nothing recognized")
-                return
-            try:
-                self.paste(text)
-            except Exception as e:  # clipboard can be locked by another app
-                log.exception("paste failed")
-                self._set(State.IDLE, f"Paste failed: {e}")
-                return
-            log.info("pasted %d characters", len(text))  # not the text itself: privacy
-            self._set(State.IDLE)
+            self._set(State.IDLE, str(payload or ""))
         elif kind == ERROR:
             self._set(State.IDLE, f"Error: {payload}")
 
@@ -108,15 +113,29 @@ class App:
         threading.Thread(target=self._transcribe, args=(audio,), daemon=True).start()
 
     def _transcribe(self, audio: np.ndarray) -> None:
+        """Worker thread: transcribe and paste. Pasting here (not on the Tk thread) keeps
+        the main loop free, so the hotkey thread never waits on it. State stays
+        TRANSCRIBING until pasted, so toggles can't interfere."""
         try:
             t0 = time.perf_counter()
             text = self.transcriber.transcribe(audio)
             log.info("transcribed %.1f s audio in %.2f s", len(audio) / SAMPLE_RATE,
                      time.perf_counter() - t0)
-            self.events.put((DONE, text))
         except Exception as e:
             log.exception("transcription failed")
             self.events.put((ERROR, str(e)))
+            return
+        if not text:
+            self.events.put((DONE, "Nothing recognized"))
+            return
+        try:
+            self.paste(text)
+        except Exception as e:  # clipboard can be locked by another app
+            log.exception("paste failed")
+            self.events.put((ERROR, f"paste failed: {e}"))
+            return
+        log.info("pasted %d characters", len(text))  # not the text itself: privacy
+        self.events.put((DONE, ""))
 
     def process_pending(self) -> bool:
         """Handle all queued events without blocking (called from the Tk loop).

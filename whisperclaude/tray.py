@@ -12,8 +12,6 @@ from whisperclaude.app import State
 
 COLORS = {None: "#9aa0a6", State.IDLE: "#4caf50", State.RECORDING: "#ff4d4f",
           State.TRANSCRIBING: "#f5a623"}
-LABELS = {None: "Loading model…", State.IDLE: "Ready (tap Left Ctrl)",
-          State.RECORDING: "Recording", State.TRANSCRIBING: "Transcribing"}
 
 
 def _image(color: str) -> Image.Image:
@@ -29,16 +27,21 @@ def _image(color: str) -> Image.Image:
 
 
 class Tray:
-    def __init__(self, on_quit: Callable[[], None], log_path: Path) -> None:
+    def __init__(self, on_quit: Callable[[], None], log_path: Path, config_path: Path,
+                 hotkey_label: str = "Left Ctrl") -> None:
         self._state: State | None = None
+        self._labels = {None: "Loading model…", State.IDLE: f"Ready (tap {hotkey_label})",
+                        State.RECORDING: "Recording", State.TRANSCRIBING: "Transcribing"}
         self._images = {s: _image(c) for s, c in COLORS.items()}
         menu = pystray.Menu(
-            pystray.MenuItem(lambda item: f"Status: {LABELS[self._state]}", None, enabled=False),
+            pystray.MenuItem(lambda item: f"Status: {self._labels[self._state]}", None,
+                             enabled=False),
+            pystray.MenuItem("Open config", lambda icon, item: os.startfile(config_path)),
             pystray.MenuItem("Open log", lambda icon, item: os.startfile(log_path)),
             pystray.MenuItem("Quit", lambda icon, item: on_quit()),
         )
         self.icon = pystray.Icon("WhisperClaude", self._images[None],
-                                 f"WhisperClaude – {LABELS[None]}", menu)
+                                 f"WhisperClaude – {self._labels[None]}", menu)
 
     def start(self) -> None:
         self.icon.run_detached()
@@ -46,7 +49,7 @@ class Tray:
     def set_state(self, state: State, msg: str = "") -> None:
         self._state = state
         self.icon.icon = self._images[state]
-        self.icon.title = f"WhisperClaude – {LABELS[state]}"
+        self.icon.title = f"WhisperClaude – {self._labels[state]}"
         self.icon.update_menu()
 
     def stop(self) -> None:
