@@ -10,9 +10,8 @@ Everything runs on your machine. Audio never leaves the laptop.
   <img src="docs/images/demo.gif" alt="Status pill: loading, ready, recording with live level bars, transcribing" width="300">
 </p>
 
-> Built with [Claude Code](https://claude.com/claude-code): planning, benchmarks, code and
-> tests were developed in pair-programming sessions with Claude. Every decision and its
-> measurements are documented in [`docs/PLAN.md`](docs/PLAN.md).
+Built with [Claude Code](https://claude.com/claude-code). Every decision and its
+measurements are documented in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Features
 
