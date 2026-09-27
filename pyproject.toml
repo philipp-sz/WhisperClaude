@@ -25,4 +25,6 @@ dev = ["pytest"]
 packages = ["whisperclaude"]
 
 [tool.pytest.ini_options]
-markers = ["slow: loads a real Whisper model (deselect with -m 'not slow')"]
+testpaths = ["tests"]
+addopts = "-m 'not slow'"  # slow tests are opt-in: pytest -m slow
+markers = ["slow: loads a real Whisper model (run with -m slow)"]

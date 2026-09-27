@@ -100,7 +100,7 @@ Working rule: after each step, stop and report what was done: files changed, com
 2. recorder.py → inserter.py → hotkey.py: minimal console version working end-to-end.
 3. DONE. overlay.py + tray.py: switch to pythonw (no console). Also added: log file, single-instance mutex, offline model loading.
 4. DONE. install_autostart.py, logging, config file (config.toml, tray "Open config"). Also: event-driven Tk loop instead of 50 ms polling (idle CPU 1.04 % → 0.05 % of a core); paste moved to the worker thread.
-5. Tests.
+5. DONE. Tests: 31 fast (app, config, hotkey, inserter) + 3 slow (real model on TTS clips in tests/data).
 
 ## Tests (pytest, lean)
 - config.py: defaults and invalid values.

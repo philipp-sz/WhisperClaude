@@ -20,7 +20,7 @@ After each implementation step, stop and report: files changed, commands run, re
 .venv\Scripts\pythonw.exe -m whisperclaude        # run without console (as autostart does)
 .venv\Scripts\python.exe scripts\install_autostart.py [--remove]   # login autostart
 .venv\Scripts\python.exe scripts\benchmark.py     # model speed; record_clip.py + compare_decoding.py for quality
-.venv\Scripts\python.exe -m pytest -m "not slow"  # fast tests
+.venv\Scripts\python.exe -m pytest                # fast tests (slow ones are deselected by default)
 .venv\Scripts\python.exe -m pytest -m slow        # loads a real Whisper model
 ```
 
@@ -30,4 +30,4 @@ After each implementation step, stop and report: files changed, commands run, re
 - Threading: tkinter on the main thread, hotkey on pynput's thread, transcription + paste on a worker thread; communicate via `WakeQueue` (wakes Tk via a virtual event, no polling). Never block the Tk thread for long: the hotkey thread waits on it.
 - Settings live in `config.toml` (validated by `config.py`); logs in `%LOCALAPPDATA%\WhisperClaude\log.txt`. Never log transcript text (privacy).
 - Tests: pytest, lean. Mark model-loading tests `@pytest.mark.slow`.
-- Don't commit audio: `*.wav` is ignored except `tests/data/*.wav`.
+- Don't commit audio: `*.wav` is ignored except `tests/data/*.wav`, which are Windows text-to-speech clips. Never commit recordings of the user's voice or personal details (names, user paths, places).
