@@ -1,5 +1,6 @@
 """State machine (App) with fake recorder / transcriber / paste: no hardware needed."""
 import threading
+import time
 
 import numpy as np
 
@@ -128,12 +129,21 @@ def test_restart_stops_with_reason():
     assert app.exit_reason == RESTART
 
 
+def wait_for(condition, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def test_wake_queue_calls_wake_and_swallows_errors():
     q = WakeQueue()
     calls = []
     q.wake = lambda: calls.append(1)
     q.put("a")
-    assert calls == [1]
+    assert wait_for(lambda: calls == [1])
 
     def broken():
         raise RuntimeError("main thread is not in main loop")
@@ -141,3 +151,66 @@ def test_wake_queue_calls_wake_and_swallows_errors():
     q.wake = broken
     q.put("b")  # must not raise: the backup poll picks it up
     assert [q.get_nowait(), q.get_nowait()] == ["a", "b"]
+
+
+def test_wake_queue_put_never_waits_for_the_consumer():
+    """put() runs inside the keyboard hook callback: if it blocked on a busy Tk thread,
+    Windows would silently remove the hook."""
+    q = WakeQueue()
+    release = threading.Event()
+    q.wake = lambda: release.wait(5)  # a consumer that is stuck
+    t0 = time.monotonic()
+    for i in range(3):
+        q.put(i)
+    assert time.monotonic() - t0 < 0.2
+    release.set()
+
+
+# ---------- LOADING state: the app is alive while the model loads ----------
+
+def make_loading_app():
+    states = []
+    app = App(FakeRecorder(), None, lambda text: None,
+              on_state=lambda s, msg="": states.append((s, msg)))
+    return app, states
+
+
+def test_starts_in_loading_without_transcriber():
+    app, _ = make_loading_app()
+    assert app.state is State.LOADING
+
+
+def test_toggle_while_loading_says_so_and_does_not_record():
+    app, states = make_loading_app()
+    app.handle(TOGGLE)
+    assert app.state is State.LOADING
+    assert app.recorder.started == 0
+    assert states == [(State.LOADING, "Still loading – one moment…")]
+
+
+def test_set_transcriber_ends_loading():
+    app, states = make_loading_app()
+    tr = BlockingTranscriber()
+    tr.release.set()
+    app.set_transcriber(tr)
+    assert app.state is State.IDLE and states == []  # caller shows its own "ready" animation
+    app.handle(TOGGLE)
+    assert app.state is State.RECORDING
+
+
+def test_quit_and_restart_work_while_loading():
+    for kind in (QUIT, RESTART):
+        app, _ = make_loading_app()
+        app.events.put((TOGGLE, None))
+        app.events.put((kind, None))
+        assert app.process_pending() is False
+        assert app.exit_reason == kind
+
+
+def test_custom_event_handlers():
+    app, _ = make_loading_app()
+    seen = []
+    app.handlers["loaded"] = seen.append
+    app.handle("loaded", "payload")
+    app.handle("unknown kind", "ignored")  # no handler: ignored
+    assert seen == ["payload"]

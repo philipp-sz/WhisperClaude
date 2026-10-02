@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 
 from whisperclaude.app import State
 
-COLORS = {None: "#9aa0a6", State.IDLE: "#4caf50", State.RECORDING: "#ff4d4f",
+COLORS = {State.LOADING: "#9aa0a6", State.IDLE: "#4caf50", State.RECORDING: "#ff4d4f",
           State.TRANSCRIBING: "#f5a623"}
 
 
@@ -29,9 +29,9 @@ def _image(color: str) -> Image.Image:
 class Tray:
     def __init__(self, on_quit: Callable[[], None], on_restart: Callable[[], None],
                  log_path: Path, config_path: Path, hotkey_label: str = "Left Ctrl") -> None:
-        self._state: State | None = None
+        self._state = State.LOADING
         self.engine = ""  # "iGPU" / "CPU", set once the model is loaded
-        self._labels = {None: "Loading model…", State.IDLE: f"Ready (tap {hotkey_label})",
+        self._labels = {State.LOADING: "Loading model…", State.IDLE: f"Ready (tap {hotkey_label})",
                         State.RECORDING: "Recording", State.TRANSCRIBING: "Transcribing"}
         self._images = {s: _image(c) for s, c in COLORS.items()}
         menu = pystray.Menu(
@@ -41,8 +41,8 @@ class Tray:
             pystray.MenuItem("Open log", lambda icon, item: os.startfile(log_path)),
             pystray.MenuItem("Quit", lambda icon, item: on_quit()),
         )
-        self.icon = pystray.Icon("WhisperClaude", self._images[None],
-                                 f"WhisperClaude – {self._labels[None]}", menu)
+        self.icon = pystray.Icon("WhisperClaude", self._images[State.LOADING],
+                                 f"WhisperClaude – {self._labels[State.LOADING]}", menu)
 
     def _status(self) -> str:
         label = self._labels[self._state]

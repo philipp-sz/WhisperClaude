@@ -72,15 +72,23 @@ def key_label(name: str) -> str:
 
 
 class HotkeyListener:
-    """Keyboard + mouse listeners (pynput threads) feeding one TapDetector."""
+    """Keyboard + mouse listeners (pynput threads) feeding one TapDetector.
+
+    The callbacks run inside Windows low-level hooks, which Windows silently removes if a
+    callback is slow, so they only do trivial work (events.put never waits for the consumer).
+    """
 
     def __init__(self, events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,
                  max_hold: float = MAX_HOLD_S) -> None:
-        tap = TapDetector(key, max_hold)
+        self._events, self._key, self._max_hold = events, key, max_hold
+        self._start()
+
+    def _start(self) -> None:
+        tap = TapDetector(self._key, self._max_hold)
 
         def on_release(k: Key | KeyCode | None) -> None:
             if tap.release(k):
-                events.put((TOGGLE, None))
+                self._events.put((TOGGLE, None))
 
         self._keyboard = Listener(on_press=tap.press, on_release=on_release)
         self._mouse = mouse.Listener(
@@ -94,6 +102,31 @@ class HotkeyListener:
     def stop(self) -> None:
         self._keyboard.stop()
         self._mouse.stop()
+
+    def restart(self) -> None:
+        """Install fresh hooks (e.g. after a wake from sleep, in case Windows dropped the old)."""
+        self.stop()
+        self._start()
+
+
+class GapDetector:
+    """Detects that the machine was suspended: a periodic check that suddenly sees a long gap.
+
+    Uses the wall clock, which keeps running during sleep (unlike monotonic clocks, which may
+    not on Windows). A clock change by the user also triggers it, which is harmless here.
+    """
+
+    def __init__(self, threshold_s: float = 15.0, clock: Callable[[], float] = time.time) -> None:
+        self.threshold_s = threshold_s
+        self.clock = clock
+        self._last = clock()
+
+    def check(self) -> float:
+        """Call periodically (every ~1 s). Returns the gap in seconds if it exceeded the
+        threshold since the previous call, else 0."""
+        now = self.clock()
+        gap, self._last = now - self._last, now
+        return gap if gap > self.threshold_s else 0.0
 
 
 def start_hotkey_listener(events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,

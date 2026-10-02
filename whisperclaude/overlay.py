@@ -352,7 +352,10 @@ class Overlay:
 
     def set_state(self, state: State, msg: str = "") -> None:
         """App.on_state callback."""
-        if state is State.RECORDING:
+        if state is State.LOADING:
+            if msg:  # a tap while the model loads: the start pill says what's going on
+                self.set_starting_text(msg)
+        elif state is State.RECORDING:
             self.show_recording()
         elif state is State.TRANSCRIBING:
             self.show_transcribing()

@@ -16,15 +16,11 @@ import numpy as np
 from faster_whisper import BatchedInferencePipeline, WhisperModel
 from faster_whisper.vad import VadOptions, collect_chunks, get_speech_timestamps
 
+from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY, SAMPLE_RATE  # noqa: F401 (re-exported)
+
 log = logging.getLogger(__name__)
 
-SAMPLE_RATE = 16_000
 CHUNK_S = 30  # Whisper's window
-
-# Correctly punctuated bilingual "previous text": Whisper copies its style. Fixes missing
-# punctuation, capitals after pauses, and German+English audio being translated to one language.
-DEFAULT_PROMPT = "Hallo, das ist ein Test. Okay, so let's see how this works, and then we'll decide."
-DEFAULT_VOCABULARY = ("Claude", "cloud", "Gemini", "VS Code", "iGPU")
 OV_CACHE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "WhisperClaude" / "ov_cache"
 
 

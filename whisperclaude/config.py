@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from whisperclaude.hotkey import parse_key
-from whisperclaude.transcriber import DEFAULT_PROMPT, DEFAULT_VOCABULARY
+from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 COMPUTE_TYPES = {"int8", "int8_float32", "int16", "float32"}
