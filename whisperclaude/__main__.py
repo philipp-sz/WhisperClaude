@@ -231,8 +231,15 @@ def main() -> None:
         overlay.show_goodbye("Restarting…" if restart else "WhisperClaude stopped", finish)
 
     gap = GapDetector()
+    last_poll = [time.monotonic()]
 
     def backup_poll() -> None:
+        now = time.monotonic()
+        stall, last_poll[0] = now - last_poll[0] - BACKUP_POLL_MS / 1000, now
+        if 2.0 < stall < GapDetector().threshold_s:
+            # The UI thread didn't get to run for a while (e.g. cold-disk DLL loading holds the
+            # GIL during the model load at logon): the pill can't animate in that time.
+            log.warning("UI thread was blocked for %.1f s", stall)
         slept = gap.check()
         if slept:
             # Waking from sleep (session kept alive): Windows may have dropped our keyboard
