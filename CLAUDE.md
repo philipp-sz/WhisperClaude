@@ -25,9 +25,11 @@ After each implementation step, stop and report: files changed, commands run, re
 ```
 
 ## Conventions
-- Package: `whisperclaude/`, one module per concern (recorder, transcriber, inserter, hotkey, overlay, tray, config).
+- Package: `whisperclaude/`, one module per concern (recorder, transcriber, inserter, hotkey, overlay, tray, config, constants).
 - Type hints + short docstrings in package code; scripts can be minimal.
 - Threading: tkinter on the main thread, hotkey on pynput's thread, transcription + paste on a worker thread; communicate via `WakeQueue` (wakes Tk via a virtual event, no polling). Never block the Tk thread for long: the hotkey thread waits on it.
+- Hook callbacks (pynput) must stay trivial: Windows silently removes a low-level hook whose callback is slow. `WakeQueue.put()` therefore never waits for Tk. Don't add blocking calls to hotkey callbacks.
+- Startup order (see `__main__` docstring): UI, tray, hotkey and event pump first, model load on a thread (`LOADING` state). The app is also restarted at every logon, and on this laptop closing the lid ends the Windows session, so a slow cold start is the normal case. Don't import `whisperclaude.transcriber` (heavy) on the UI path; shared light constants live in `constants.py`.
 - Settings live in `config.toml` (validated by `config.py`); logs in `%LOCALAPPDATA%\WhisperClaude\log.txt`. Never log transcript text (privacy).
 - Tests: pytest, lean. Mark model-loading tests `@pytest.mark.slow`.
 - Don't commit audio: all `*.wav` are git-ignored, including `tests/data/` (slow tests use clips the user records with `scripts/record_clip.py --dir tests/data`, else they skip). Never commit recordings of the user's voice or personal details (names, user paths, places).

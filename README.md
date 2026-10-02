@@ -1,10 +1,11 @@
 # WhisperClaude
 
-Local, private push-to-talk dictation for Windows, inspired by Wispr Flow.
-Tap **Left Ctrl**, speak (German, English or both mixed), tap again, and the text is pasted
-into whatever text field has focus: Word, the browser, chat apps, editors.
+**Dictate into any Windows app, locally and fast.** Tap **Left Ctrl**, speak (German, English or
+both), tap again: the text appears in whatever text field has focus. Word, browser, chat, editor.
 
-Everything runs on your machine. Audio never leaves the laptop.
+Most dictation tools process your voice in the cloud. WhisperClaude runs OpenAI's Whisper model
+on your own laptop, so your audio never leaves it, and a 10-second sentence takes about a third
+of a second on an Intel iGPU. Inspired by Wispr Flow.
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="Status pill: loading, ready, recording with live level bars, transcribing" width="300">
@@ -13,20 +14,51 @@ Everything runs on your machine. Audio never leaves the laptop.
 Built with [Claude Code](https://claude.com/claude-code). Every decision and its
 measurements are documented in [`docs/PLAN.md`](docs/PLAN.md).
 
-## Features
+## What it does
 
-- **One key:** tap Left Ctrl alone to start/stop. Ctrl+C, Ctrl+click or Ctrl+scroll don't trigger it.
-- **Fast on laptops:** uses the Intel iGPU via OpenVINO (Whisper large-v3-turbo) when available,
-  otherwise faster-whisper on the CPU (Whisper small). Picked automatically at startup.
-- **German + English:** auto-detects the language, keeps mixed recordings as spoken.
-- **Good punctuation:** a bilingual example prompt sets the style; long recordings are cut at
-  speech pauses, so there are no stray capitals after pauses and no words lost at 30 s boundaries.
-- **Custom vocabulary:** names and terms Whisper should spell exactly (e.g. "Claude", "VS Code").
-- **Floating status pill:** level bars that follow your voice while recording, a wave while
-  transcribing, start/stop animations. It never takes focus from the text field.
-- **Tray icon:** status, open config, restart (apply config), open log, quit.
-- **Clipboard-safe:** your previous clipboard text is restored after pasting.
-- **Starts at login** without a console window (Task Scheduler logon task).
+- **One key, any app.** A short tap of Left Ctrl starts and stops recording; Ctrl+C, Ctrl+click
+  and Ctrl+scroll don't trigger it. Your clipboard is restored after pasting.
+- **German and English, even mixed,** with good punctuation, automatic language detection and a
+  custom vocabulary for names ("Claude", "VS Code").
+- **Private.** No cloud, no account, works offline after the first model download.
+- **Fast and light.** Uses the Intel iGPU if there is one, else the CPU. Negligible idle cost;
+  starts silently at login with a tray icon.
+
+## Installation
+
+Windows 11 (10 untested), Python 3.12+, about 2 GB for the models. An Intel GPU/iGPU (Core Ultra,
+Arc) is optional; without one the CPU is used.
+
+```powershell
+git clone https://github.com/philipp-sz/WhisperClaude.git
+cd WhisperClaude
+py -m venv .venv
+.venv\Scripts\python.exe -m pip install -e .
+.venv\Scripts\python.exe -m whisperclaude
+```
+
+The last command is a first run with a console, to watch the model download (on an iGPU also a
+one-time ~15 s compile). To start it automatically at every login (Task Scheduler logon task):
+
+```powershell
+.venv\Scripts\python.exe scripts\install_autostart.py            # install and start
+.venv\Scripts\python.exe scripts\install_autostart.py --remove   # uninstall
+```
+
+## Usage
+
+1. Click into any text field and tap **Left Ctrl**. A pill shows level bars that follow your voice.
+2. Speak, then tap **Left Ctrl** again. The text is pasted a moment later.
+
+The tray icon (under the **^** arrow next to the clock) shows the state; right-click it for
+status, config, restart, log and quit.
+
+<p align="center">
+  <img src="docs/images/tray-icons.png" alt="Tray icon states: grey loading, green ready, red recording, amber transcribing" width="320">
+</p>
+
+Settings (hotkey, device, language, vocabulary, …) are in the commented
+[`config.toml`](config.toml). After editing, use tray → **Restart (apply config)**.
 
 ## How it works
 
@@ -44,101 +76,30 @@ flowchart LR
     I --> J[Restore the<br/>old clipboard]
 ```
 
-Both backends get the same bilingual example prompt plus your vocabulary as "previous text",
-which steers punctuation and the spelling of names.
+- **Accuracy.** Cutting at speech pauses avoids stray capitals after pauses and words lost at
+  Whisper's 30 s window edge. A punctuated bilingual example plus your vocabulary is given to the
+  model as "previous text", which steers punctuation and spelling and keeps mixed German/English
+  audio from being translated into one language.
+- **Two backends.** OpenVINO on the iGPU, or faster-whisper on the CPU if there is no GPU or
+  loading it fails. Chosen at startup.
+- **Always responsive.** Hotkey, tray and pill come up first and the model loads in the
+  background; a tap during loading says "still loading". After a wake from sleep the hotkey and
+  audio devices are re-armed.
 
-## Requirements
-
-- Windows 11 (tested; Windows 10 should work but is untested). Uses Win32 APIs for hotkey,
-  overlay and pasting.
-- Python 3.12 or newer (developed on 3.14).
-- Optional: an Intel GPU/iGPU supported by OpenVINO (e.g. Intel Arc, Core Ultra). Without one,
-  the CPU path is used.
-- About 1–2 GB free disk space for the models (downloaded on first start).
-
-## Installation
-
-```powershell
-git clone https://github.com/philipp-sz/WhisperClaude.git
-cd WhisperClaude
-py -m venv .venv
-.venv\Scripts\python.exe -m pip install -e .
-```
-
-Run it once with a console to watch the first start (model download; on an iGPU also a
-one-time compile of ~15 s):
-
-```powershell
-.venv\Scripts\python.exe -m whisperclaude
-```
-
-Then install the autostart. It registers a logon task and starts the app right away:
-
-```powershell
-.venv\Scripts\python.exe scripts\install_autostart.py            # install
-.venv\Scripts\python.exe scripts\install_autostart.py --remove   # uninstall
-```
-
-## Usage
-
-1. Click into any text field.
-2. Tap **Left Ctrl** (alone, briefly). The pill shows "● Recording".
-3. Speak. Tap **Left Ctrl** again. The text appears a moment later.
-
-A tap during transcription is ignored. Recordings under 0.3 s are discarded.
-
-The tray icon (under the **^** arrow next to the clock) shows the state by color. Right-click
-for the menu (status incl. iGPU/CPU, open config, restart, open log, quit).
-
-<p align="center">
-  <img src="docs/images/tray-icons.png" alt="Tray icon states: grey loading, green ready, red recording, amber transcribing" width="320">
-</p>
-
-## Configuration
-
-Settings live in [`config.toml`](config.toml); every key is optional. After editing, use
-tray → **Restart (apply config)**. Invalid values are reported in the log and the defaults are used.
-
-| Key | Default | Meaning |
-|---|---|---|
-| `hotkey.key` | `"ctrl_l"` | Key to tap: `ctrl_l`, `ctrl_r`, `f9`, `pause`, … |
-| `model.device` | `"auto"` | `auto` = iGPU if available, else CPU; `gpu`; `cpu` |
-| `model.gpu_model` | `"large-v3-turbo"` | OpenVINO Whisper model on the iGPU |
-| `model.cpu_model` | `"small"` | faster-whisper model on the CPU |
-| `model.language` | `""` | `""` = auto-detect, or lock to `"de"` / `"en"` |
-| `model.initial_prompt` | bilingual example | Punctuated text whose style Whisper copies |
-| `model.vocabulary` | `["Claude", "cloud", …]` | Words to spell exactly. Keep the list short. |
-| `paste.restore_delay_s` | `0.3` | Wait before restoring the old clipboard |
-
-Logs: `%LOCALAPPDATA%\WhisperClaude\log.txt`. Transcribed text is never written to the log.
-
-## Performance
-
-Measured on an Intel Core Ultra 7 258V (Arc 140V iGPU), battery power:
+Measured on an Intel Core Ultra 7 258V (Arc 140V iGPU), on battery:
 
 | Backend | 10 s audio | 60 s audio | Extra energy per 60 s dictation |
 |---|---|---|---|
 | faster-whisper small, CPU | 3.6 s | 6.9 s | ~38 J |
 | **OpenVINO large-v3-turbo, iGPU** | **0.33 s** | **1.5 s** | **~19 J** |
 
-Idle: ~0.05–1 % of one CPU core; no measurable effect on battery draw. RAM: ~1.2 GB with the
-iGPU model loaded. Details, including the benchmarks behind each decision, are in
-[`docs/PLAN.md`](docs/PLAN.md).
+RAM is about 1.2 GB with the iGPU model loaded; idle CPU is about 1 % of one core, with no
+measurable effect on battery draw. Benchmarks behind each decision: [`docs/PLAN.md`](docs/PLAN.md).
+Logs (never containing transcripts): `%LOCALAPPDATA%\WhisperClaude\log.txt`.
 
-## Privacy
-
-- Audio is recorded only while the pill shows "Recording" and is processed in memory only.
-- No cloud services. The only network access is downloading the models from Hugging Face on the
-  first start; after that the app runs offline.
-- Transcripts are not logged or stored.
-
-## Limitations
-
-- Windows only.
-- Only text clipboard content is restored; an image on the clipboard is lost after dictating.
-- The app can't see the text field, so dictating directly after existing text doesn't add a
-  leading space.
-- The NPU isn't used (OpenVINO's Whisper pipeline failed on it in testing).
+**Limitations:** Windows only; only text on the clipboard is restored (an image would be lost);
+no leading space when dictating after existing text; the NPU isn't used (OpenVINO's Whisper
+pipeline failed on it).
 
 ## Development
 
@@ -148,32 +109,19 @@ iGPU model loaded. Details, including the benchmarks behind each decision, are i
 .venv\Scripts\python.exe -m pytest -m slow  # real models on CPU and (if present) iGPU
 ```
 
-The slow tests need two short clips of your own voice, which aren't part of the repo (all
-`*.wav` files are git-ignored). Record them once; the script shows the sentence to read:
+The slow tests need two short clips of your own voice. They aren't in the repo (`*.wav` is
+git-ignored); without them the tests are skipped and print the `scripts/record_clip.py` command.
 
-```powershell
-.venv\Scripts\python.exe scripts\record_clip.py speech_de --dir tests/data --say "Guten Morgen. Die Brötchen und der Käse sind sehr lecker."
-.venv\Scripts\python.exe scripts\record_clip.py speech_en --dir tests/data --say "Good morning. This is a short test of the dictation app."
-```
+## License
 
-Without them, those tests are skipped with this hint.
-
-Helper scripts in `scripts/`: `benchmark.py` (model speed), `record_clip.py` and
-`compare_decoding.py` (decoding quality on your own recordings), `check_env.py` (sanity check).
-
-## Third-party licenses
-
-This repository contains only its own code (MIT, see [LICENSE.md](LICENSE.md)). Dependencies are
-installed via pip and models are downloaded at runtime; they keep their own licenses:
+MIT, see [LICENSE.md](LICENSE.md). Dependencies are installed via pip and models downloaded at
+runtime; they keep their own licenses:
 
 | Component | License |
 |---|---|
-| [faster-whisper](https://github.com/SYSTRAN/faster-whisper), CTranslate2, ONNX Runtime, sounddevice | MIT |
-| Whisper models ([OpenAI](https://github.com/openai/whisper); [Systran](https://huggingface.co/Systran/faster-whisper-small) and [OpenVINO](https://huggingface.co/OpenVINO) conversions) | MIT |
-| Silero VAD (bundled with faster-whisper) | MIT |
-| OpenVINO, OpenVINO GenAI, OpenVINO Tokenizers, Hugging Face tokenizers / huggingface_hub | Apache-2.0 |
-| NumPy, PyAV, psutil, pyperclip | BSD |
-| Pillow | MIT-CMU |
-| [pynput](https://github.com/moses-palmer/pynput), [pystray](https://github.com/moses-palmer/pystray) | LGPL-3.0 (used unmodified as separately installed libraries) |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper), CTranslate2, ONNX Runtime, sounddevice, Whisper models ([OpenAI](https://github.com/openai/whisper), [Systran](https://huggingface.co/Systran/faster-whisper-small) and [OpenVINO](https://huggingface.co/OpenVINO) conversions), Silero VAD | MIT |
+| OpenVINO (+ GenAI, Tokenizers), Hugging Face tokenizers / huggingface_hub | Apache-2.0 |
+| NumPy, PyAV, psutil, pyperclip; Pillow | BSD; MIT-CMU |
+| [pynput](https://github.com/moses-palmer/pynput), [pystray](https://github.com/moses-palmer/pystray) | LGPL-3.0 (unmodified, installed separately) |
 
 "Wispr Flow" is mentioned only to describe the idea; this project is not affiliated with it.
