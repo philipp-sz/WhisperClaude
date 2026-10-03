@@ -29,6 +29,8 @@ WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
 SPI_GETWORKAREA = 0x0030
+HWND_TOPMOST = ctypes.c_void_p(-1)
+SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0010, 0x0040
 
 KEY = "#ff00fe"  # transparent color key (corners outside the pill)
 BG = "#202124"
@@ -109,6 +111,7 @@ class Overlay:
         self._frame_fn: Callable[[float], bool | None] | None = None
         self._t0 = 0.0
         self._alpha = 0.0
+        self._hwnd = 0  # real top-level window handle, set by _no_activate()
         self._w = self.h
         self._dot: int | None = None
         self._label: int | None = None
@@ -126,9 +129,21 @@ class Overlay:
         if previous and user32.GetForegroundWindow() == user32.GetParent(root.winfo_id()):
             user32.SetForegroundWindow(previous)
 
+    def _raise_topmost(self) -> None:
+        """Put the pill back on top of every other window, without activating it.
+
+        Tk's "-topmost" is only applied once. After a long sleep (seen: 14 h) Windows had
+        moved the window below other windows while it still carried the topmost flag: alive,
+        visible, correct alpha and position, but not on screen. Re-asserting the topmost
+        position every time the pill is shown fixes that.
+        """
+        ctypes.windll.user32.SetWindowPos(
+            self._hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+
     def _no_activate(self) -> None:
         user32 = ctypes.windll.user32
-        hwnd = user32.GetParent(self.root.winfo_id())
+        hwnd = self._hwnd = user32.GetParent(self.root.winfo_id())
         style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         user32.SetWindowLongW(
             hwnd, GWL_EXSTYLE,
@@ -166,6 +181,8 @@ class Overlay:
     def _fade(self, target: float, ms: int = FADE_MS,
               then: Callable[[], None] | None = None) -> None:
         self._cancel("fade")
+        if target > 0:  # about to be shown
+            self._raise_topmost()
         start, t0 = self._alpha, time.monotonic()
 
         def step() -> None:
