@@ -45,3 +45,9 @@ def test_empty_old_clipboard_is_not_restored(fake):
     fake["clipboard"] = ""
     inserter.paste_text("neu")
     assert fake["clipboard"] == "neu"
+
+
+def test_line_breaks_are_pasted_as_windows_crlf(fake):
+    inserter.paste_text("one\n\n- two\r\nthree")
+    assert fake["at_ctrl_v"] == "one\r\n\r\n- two\r\nthree"
+    assert inserter.to_clipboard_text("plain") == "plain"

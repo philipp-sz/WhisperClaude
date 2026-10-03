@@ -34,6 +34,11 @@ def wait_for_modifiers_released(timeout: float = 2.0) -> None:
         time.sleep(0.02)
 
 
+def to_clipboard_text(text: str) -> str:
+    """Windows clipboard text uses CRLF; plain LF shows up as nothing or a box in some apps."""
+    return text.replace("\r\n", "\n").replace("\n", "\r\n")
+
+
 def paste_text(text: str, restore_delay: float = 0.3) -> None:
     """Paste text into whatever has focus and restore the previous clipboard.
 
@@ -45,7 +50,7 @@ def paste_text(text: str, restore_delay: float = 0.3) -> None:
         old = pyperclip.paste()
     except pyperclip.PyperclipException:
         old = None
-    pyperclip.copy(text)
+    pyperclip.copy(to_clipboard_text(text))
 
     wait_for_modifiers_released()
     time.sleep(0.05)

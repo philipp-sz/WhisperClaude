@@ -20,6 +20,8 @@ measurements are documented in [`docs/PLAN.md`](docs/PLAN.md).
   and Ctrl+scroll don't trigger it. Your clipboard is restored after pasting.
 - **German and English, even mixed,** with good punctuation, automatic language detection and a
   custom vocabulary for names ("Claude", "VS Code").
+- **Formatting by voice.** Say "command new line", "command bullet", … to get line breaks,
+  Markdown bullets and quotes while you dictate. Only these exact pairs are ever replaced.
 - **Private.** No cloud, no account, works offline after the first model download.
 - **Fast and light.** Uses the Intel iGPU if there is one, else the CPU. Negligible idle cost;
   starts silently at login with a tray icon.
@@ -56,6 +58,36 @@ status, config, restart, log and quit.
 <p align="center">
   <img src="docs/images/tray-icons.png" alt="Tray icon states: grey loading, green ready, red recording, amber transcribing" width="320">
 </p>
+
+### Formatting by voice
+
+Say the trigger word **command** followed by one of these (always in English, also while
+dictating German):
+
+| You say | You get |
+|---|---|
+| `command new line` | a line break |
+| `command new paragraph` | a blank line |
+| `command bullet` | a new line starting with `- ` (Markdown list item) |
+| `command separator` | a Markdown separator `---` with a blank line above and below |
+| `command open quote` … `command close quote` | `"…"` |
+
+For example "My shopping list. Command bullet milk. Command bullet eggs. That is all." becomes:
+
+```
+My shopping list.
+- milk
+- eggs
+
+That is all.
+```
+
+A bullet item ends at the end of its sentence, and the text after it starts after a blank line
+(which is also what ends a list in Markdown). Because
+a command is always trigger + command word, sentences that merely contain "new line" or "bullet"
+are left alone, and so is "command" used as an ordinary noun ("the command bullet by bullet").
+If Whisper mishears a command it simply stays in the text, where you can see and fix it. The trigger word, the bullet character and an on/off switch are in the `[commands]`
+section of `config.toml`.
 
 Settings (hotkey, device, language, vocabulary, …) are in the commented
 [`config.toml`](config.toml). After editing, use tray → **Restart (apply config)**.

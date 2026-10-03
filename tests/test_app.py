@@ -214,3 +214,51 @@ def test_custom_event_handlers():
     app.handle("loaded", "payload")
     app.handle("unknown kind", "ignored")  # no handler: ignored
     assert seen == ["payload"]
+
+
+# ---------- postprocess (spoken formatting commands) ----------
+
+def run_cycle(app):
+    app.transcriber.release.set()
+    app.handle(TOGGLE)
+    app.handle(TOGGLE)
+    finish(app)
+
+
+def test_postprocess_runs_between_transcription_and_paste():
+    tr = BlockingTranscriber(text="hello command new line world")
+    pasted = []
+    app = App(FakeRecorder(), tr, pasted.append,
+              postprocess=lambda t: t.replace("command new line", "\n"))
+    run_cycle(app)
+    assert pasted == ["hello \n world"]
+
+
+def test_postprocess_result_that_is_only_a_line_break_is_still_pasted():
+    tr = BlockingTranscriber(text="command new line")
+    pasted = []
+    app = App(FakeRecorder(), tr, pasted.append, postprocess=lambda t: "\n")
+    run_cycle(app)
+    assert pasted == ["\n"]  # "nothing recognized" is judged on the raw transcript
+
+
+def test_empty_transcript_skips_postprocess_and_paste():
+    called = []
+    tr = BlockingTranscriber(text="")
+    app = App(FakeRecorder(), tr, lambda t: called.append("paste"),
+              postprocess=lambda t: called.append("post") or t)
+    states = []
+    app.on_state = lambda s, msg="": states.append((s, msg))
+    run_cycle(app)
+    assert called == [] and states[-1] == (State.IDLE, "Nothing recognized")
+
+
+def test_failing_postprocess_falls_back_to_the_raw_text():
+    def broken(text):
+        raise ValueError("bug")
+
+    tr = BlockingTranscriber(text="raw words")
+    pasted = []
+    app = App(FakeRecorder(), tr, pasted.append, postprocess=broken)
+    run_cycle(app)
+    assert pasted == ["raw words"]

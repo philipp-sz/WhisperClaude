@@ -25,7 +25,9 @@ from pathlib import Path
 import psutil
 
 from whisperclaude.app import QUIT, RESTART, App, State, WakeQueue
-from whisperclaude.config import CONFIG_PATH, Config, ConfigError, ModelConfig, load_config
+from whisperclaude.commands import apply_commands, prompt_examples
+from whisperclaude.config import (CONFIG_PATH, CommandsConfig, Config, ConfigError, ModelConfig,
+                                  load_config)
 from whisperclaude.hotkey import GapDetector, key_label, parse_key, start_hotkey_listener
 from whisperclaude.inserter import paste_text
 from whisperclaude.overlay import Overlay, enable_dpi_awareness
@@ -98,8 +100,11 @@ def spawn_new_instance() -> None:
                       RESTARTED_FLAG], cwd=CONFIG_PATH.parent, creationflags=flags, close_fds=True)
 
 
-def start_model_loading(events: WakeQueue, m: ModelConfig) -> None:
+def start_model_loading(events: WakeQueue, m: ModelConfig, c: CommandsConfig) -> None:
     """Load the model on a thread; the outcome arrives as LOADED / LOAD_FAILED events."""
+    prompt = m.initial_prompt
+    if c.enabled and prompt:  # priming: stops Whisper dropping/gluing "command bullet" mid-sentence
+        prompt += prompt_examples(c.trigger)
 
     def run() -> None:
         try:
@@ -109,7 +114,7 @@ def start_model_loading(events: WakeQueue, m: ModelConfig) -> None:
             transcriber = create_transcriber(
                 device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model,
                 on_status=lambda text: events.put((LOAD_STATUS, text)),
-                language=m.language or None, initial_prompt=m.initial_prompt or None,
+                language=m.language or None, initial_prompt=prompt or None,
                 vocabulary=m.vocabulary, compute_type=m.compute_type, beam_size=m.beam_size,
                 cpu_threads=m.cpu_threads, batch_size=m.batch_size,
             )
@@ -182,7 +187,10 @@ def main() -> None:
     paste = functools.partial(paste_text, restore_delay=cfg.paste.restore_delay_s)
     recorder = Recorder()
     overlay.level_fn = lambda: recorder.level
-    app = App(recorder, None, paste, events, on_state)  # starts in State.LOADING
+    cmd = cfg.commands
+    postprocess = ((lambda text: apply_commands(text, cmd.trigger, cmd.bullet))
+                   if cmd.enabled else None)
+    app = App(recorder, None, paste, events, on_state, postprocess)  # starts in State.LOADING
     listener = start_hotkey_listener(events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s)
     overlay.show_starting("Loading model…")
     log.info("UI, tray and hotkey up %.1f s after process start; loading the model",
@@ -255,7 +263,7 @@ def main() -> None:
     root.bind(WAKE_EVENT, lambda e: pump())
     events.wake = lambda: root.event_generate(WAKE_EVENT, when="tail")
     root.after(BACKUP_POLL_MS, backup_poll)
-    start_model_loading(events, cfg.model)
+    start_model_loading(events, cfg.model, cfg.commands)
     root.mainloop()
 
 

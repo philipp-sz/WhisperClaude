@@ -1,6 +1,7 @@
 """Load and validate config.toml. Every key is optional; defaults = benchmark results."""
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,13 +70,29 @@ class PasteConfig:
 
 
 @dataclass(frozen=True)
+class CommandsConfig:
+    enabled: bool = True
+    trigger: str = "command"  # say "<trigger> new line", "<trigger> bullet", ...
+    bullet: str = "- "        # what "<trigger> bullet" writes at the start of the line
+
+    def __post_init__(self) -> None:
+        _check(re.fullmatch(r"[A-Za-zÄÖÜäöüß]+( [A-Za-zÄÖÜäöüß]+)*", self.trigger) is not None
+               and len(self.trigger) <= 30,
+               "[commands] trigger must be one or a few plain words (letters and spaces)")
+        _check(1 <= len(self.bullet) <= 4 and not any(c in self.bullet for c in "\r\n"),
+               "[commands] bullet must be 1-4 characters on one line")
+
+
+@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     paste: PasteConfig = field(default_factory=PasteConfig)
+    commands: CommandsConfig = field(default_factory=CommandsConfig)
 
 
-SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "paste": PasteConfig}
+SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "paste": PasteConfig,
+            "commands": CommandsConfig}
 
 
 def _build(cls: type, raw: object, section: str):

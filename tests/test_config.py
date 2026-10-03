@@ -52,3 +52,25 @@ def test_vocabulary_list_becomes_tuple(tmp_path):
 def test_invalid_values(tmp_path, text, message):
     with pytest.raises(ConfigError, match=message):
         load_config(write(tmp_path, text))
+
+
+# ---------- [commands] ----------
+
+def test_commands_defaults_and_overrides(tmp_path):
+    assert load_config(CONFIG_PATH).commands.trigger == "command"
+    cfg = load_config(write(tmp_path, '[commands]\nenabled = false\ntrigger = "please format"\nbullet = "* "\n'))
+    assert (cfg.commands.enabled, cfg.commands.trigger, cfg.commands.bullet) == (False, "please format", "* ")
+
+
+@pytest.mark.parametrize("text, message", [
+    ('[commands]\ntrigger = ""', "trigger must be"),
+    ('[commands]\ntrigger = "hash!"', "trigger must be"),
+    ('[commands]\ntrigger = "#"', "trigger must be"),
+    ('[commands]\nbullet = ""', "bullet must be"),
+    ('[commands]\nbullet = "-----"', "bullet must be"),
+    ('[commands]\nenabled = "yes"', "expected bool"),
+    ('[commands]\nbullets = "- "', "unknown key"),
+])
+def test_commands_invalid(tmp_path, text, message):
+    with pytest.raises(ConfigError, match=message):
+        load_config(write(tmp_path, text))

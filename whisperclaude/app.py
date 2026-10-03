@@ -83,6 +83,7 @@ class App:
         paste: Callable[[str], None],
         events: queue.Queue | None = None,
         on_state: Callable[[State, str], None] | None = None,  # msg = text to show the user
+        postprocess: Callable[[str], str] | None = None,  # e.g. spoken formatting commands
     ) -> None:
         """transcriber=None starts in LOADING; call set_transcriber() once it's ready."""
         self.recorder = recorder
@@ -90,6 +91,7 @@ class App:
         self.paste = paste
         self.events: queue.Queue = events if events is not None else WakeQueue()
         self.on_state = on_state or (lambda state, msg: None)
+        self.postprocess = postprocess
         self.state = State.IDLE if transcriber is not None else State.LOADING
         self.exit_reason: str | None = None
         # Extra event kinds (e.g. "model loaded" from the loader thread) -> handler(payload)
@@ -158,6 +160,11 @@ class App:
         if not text:
             self.events.put((DONE, "Nothing recognized"))
             return
+        if self.postprocess is not None:
+            try:  # judged on the raw text above: dictating only "command new line" is valid
+                text = self.postprocess(text)
+            except Exception:
+                log.exception("postprocessing failed, pasting the raw transcript")
         try:
             self.paste(text)
         except Exception as e:  # clipboard can be locked by another app
