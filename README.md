@@ -40,7 +40,8 @@ py -m venv .venv
 ```
 
 The last command is a first run with a console, to watch the model download (on an iGPU also a
-one-time ~15 s compile). To start it automatically at every login (Task Scheduler logon task):
+one-time ~15 s compile). To start it automatically at every login, and to bring it back after
+sleep or a lock if Windows closed it meanwhile (two Task Scheduler tasks, no admin rights):
 
 ```powershell
 .venv\Scripts\python.exe scripts\install_autostart.py            # install and start
@@ -53,7 +54,8 @@ one-time ~15 s compile). To start it automatically at every login (Task Schedule
 2. Speak, then tap **Left Ctrl** again. The text is pasted a moment later.
 
 The tray icon (under the **^** arrow next to the clock) shows the state; right-click it for
-status, config, restart, log and quit.
+status, config, restart, log and quit. **Quit** stays quit until your next login; after sleep
+or a lock the app comes back by itself unless you quit it.
 
 <p align="center">
   <img src="docs/images/tray-icons.png" alt="Tray icon states: grey loading, green ready, red recording, amber transcribing" width="320">

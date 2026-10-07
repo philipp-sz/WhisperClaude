@@ -28,6 +28,7 @@ from whisperclaude.app import QUIT, RESTART, App, State, WakeQueue
 from whisperclaude.commands import apply_commands, prompt_examples
 from whisperclaude.config import (CONFIG_PATH, CommandsConfig, Config, ConfigError, ModelConfig,
                                   load_config)
+from whisperclaude import lifecycle
 from whisperclaude.hotkey import GapDetector, key_label, parse_key, start_hotkey_listener
 from whisperclaude.inserter import paste_text
 from whisperclaude.overlay import Overlay, enable_dpi_awareness
@@ -40,6 +41,10 @@ log = logging.getLogger("whisperclaude")
 BACKUP_POLL_MS = 1000  # safety net + resume detection; normally the queue wakes Tk itself
 WAKE_EVENT = "<<WhisperClaudeWake>>"
 RESTARTED_FLAG = "--restarted"  # passed by Restart: wait for the old instance to exit
+AUTOSTART_FLAG = "--autostart"  # passed by the logon task: a duplicate start exits silently
+REVIVE_FLAG = "--revive"  # passed by the unlock / wake-from-sleep task: like autostart, but
+                         # it also does nothing after a Quit from the tray
+HEARTBEAT_S = 60
 
 # Events from the model-loader thread (handled via App.handlers)
 LOADED = "loaded"            # payload: transcriber
@@ -137,7 +142,8 @@ def tell_already_running() -> None:
     """A second launch has nothing to show. Without a console (pythonw) that looks like
     "nothing happens", so say so."""
     log.warning("already running, exiting")
-    if sys.stderr is None and RESTARTED_FLAG not in sys.argv:
+    silent = {RESTARTED_FLAG, AUTOSTART_FLAG, REVIVE_FLAG}
+    if sys.stderr is None and not silent.intersection(sys.argv):  # only a manual 2nd launch
         ctypes.windll.user32.MessageBoxW(
             0, "WhisperClaude is already running.\n\nLook for the microphone icon in the tray "
                "(under the ^ arrow next to the clock). Right-click it for Restart / Quit.",
@@ -146,12 +152,23 @@ def tell_already_running() -> None:
 
 def main() -> None:
     log_path = setup_logging()
+    data_dir = log_path.parent
+    revive = REVIVE_FLAG in sys.argv
+    if revive and lifecycle.user_quit(data_dir):
+        log.info("revive request ignored: the app was quit from the tray")
+        return
     mutex = single_instance(wait_s=5 if RESTARTED_FLAG in sys.argv else 0)
     if mutex is None:
         tell_already_running()
         return
-    log.info("starting (pid %d, windows session %d, %.1f s after process start)",
-             os.getpid(), session_id(), time.time() - psutil.Process().create_time())
+    log.info("starting (pid %d, windows session %d, %.1f s after process start%s)",
+             os.getpid(), session_id(), time.time() - psutil.Process().create_time(),
+             ", revived after wake/unlock" if revive else "")
+    died = lifecycle.previous_instance_died(data_dir)
+    if died:
+        log.warning("%s", died)
+    lifecycle.clear_user_quit(data_dir)  # a normal start (login, Restart, by hand) ends a Quit
+    lifecycle.mark_running(data_dir)
 
     config_error = ""
     try:
@@ -167,6 +184,7 @@ def main() -> None:
     events = WakeQueue()
 
     def request_quit() -> None:  # thread-safe: tray thread, signal handler
+        lifecycle.mark_user_quit(data_dir)  # stays quit across wake/unlock until the next login
         events.put((QUIT, None))
 
     def request_restart() -> None:
@@ -209,7 +227,7 @@ def main() -> None:
 
     def on_load_failed(message) -> None:
         overlay.show_message("Could not load model – see log", seconds=None)
-        root.after(5000, request_quit)
+        root.after(5000, lambda: events.put((QUIT, None)))  # not a user Quit: may be revived
 
     app.handlers = {
         LOADED: on_loaded,
@@ -231,6 +249,7 @@ def main() -> None:
         tray.stop()
 
         def finish() -> None:
+            lifecycle.mark_clean_exit(data_dir)
             if restart:
                 release_instance(mutex)  # let the new instance take over
                 spawn_new_instance()
@@ -240,6 +259,7 @@ def main() -> None:
 
     gap = GapDetector()
     last_poll = [time.monotonic()]
+    last_beat = [time.monotonic()]
 
     def backup_poll() -> None:
         now = time.monotonic()
@@ -255,6 +275,9 @@ def main() -> None:
             log.info("resume detected (%.0f s gap): re-arming hotkey, refreshing audio", slept)
             listener.restart()
             recorder.refresh_devices()
+        if now - last_beat[0] >= HEARTBEAT_S:
+            last_beat[0] = now
+            lifecycle.heartbeat(data_dir)
         pump()
         if not stopped:
             root.after(BACKUP_POLL_MS, backup_poll)
