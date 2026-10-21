@@ -75,14 +75,27 @@ class Recorder:
             self.refresh_devices()
             self._stream = self._open()
 
+    def snapshot(self) -> np.ndarray:
+        """Everything recorded so far, while recording continues (thread-safe)."""
+        with self._lock:
+            chunks = list(self._chunks)
+        return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+
     def stop(self) -> np.ndarray:
-        """Close the mic and return everything recorded as a 1-D float32 array."""
+        """Close the mic and return everything recorded as a 1-D float32 array.
+
+        If closing fails (e.g. the headset was unplugged mid-recording), the error is logged and
+        the audio recorded until then is still returned; the next start() opens a new stream.
+        """
         if self._stream is None:
             return np.zeros(0, dtype=np.float32)
-        self._stream.stop()
-        self._stream.close()
-        self._stream = None
+        stream, self._stream = self._stream, None
         self.level = 0.0
+        for close in (stream.stop, stream.close):
+            try:
+                close()
+            except Exception:
+                log.warning("closing the microphone failed", exc_info=True)
         with self._lock:
             chunks, self._chunks = self._chunks, []
         if not chunks:

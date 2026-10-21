@@ -27,12 +27,18 @@ def _check(ok: bool, msg: str) -> None:
 class HotkeyConfig:
     key: str = "ctrl_l"       # tap this key alone to toggle
     max_hold_s: float = 0.5   # held longer = not a tap
+    cancel_key: str = "esc"   # pressed while recording: discard the recording; "" = off
 
     def __post_init__(self) -> None:
-        try:
-            parse_key(self.key)
-        except ValueError as e:
-            raise ConfigError(f"[hotkey] key: {e}") from None
+        for name in ("key", "cancel_key"):
+            value = getattr(self, name)
+            if name == "cancel_key" and value == "":
+                continue
+            try:
+                parse_key(value)
+            except ValueError as e:
+                raise ConfigError(f"[hotkey] {name}: {e}") from None
+        _check(self.cancel_key != self.key, "[hotkey] cancel_key must differ from key")
         _check(0.05 <= self.max_hold_s <= 3, "[hotkey] max_hold_s must be 0.05–3")
 
 
@@ -62,6 +68,15 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class RecordingConfig:
+    stop_after_silence_s: float = 60.0  # forgotten recording: stop, copy the text; 0 = never
+
+    def __post_init__(self) -> None:
+        _check(self.stop_after_silence_s == 0 or 10 <= self.stop_after_silence_s <= 3600,
+               "[recording] stop_after_silence_s must be 0 (off) or 10–3600")
+
+
+@dataclass(frozen=True)
 class PasteConfig:
     restore_delay_s: float = 0.3  # wait before restoring the old clipboard
 
@@ -87,12 +102,13 @@ class CommandsConfig:
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    recording: RecordingConfig = field(default_factory=RecordingConfig)
     paste: PasteConfig = field(default_factory=PasteConfig)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
 
 
-SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "paste": PasteConfig,
-            "commands": CommandsConfig}
+SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "recording": RecordingConfig,
+            "paste": PasteConfig, "commands": CommandsConfig}
 
 
 def _build(cls: type, raw: object, section: str):

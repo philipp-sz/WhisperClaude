@@ -4,6 +4,7 @@
 [hotkey]
 key = "ctrl_l"        # tap alone to start/stop: "ctrl_l", "ctrl_r", "f9", "pause", ...
 max_hold_s = 0.5      # holding the key longer than this doesn't count as a tap
+cancel_key = "esc"    # pressed while recording: throw the recording away ("" = off)
 
 [model]
 device = "auto"       # "auto" = Intel iGPU via OpenVINO if available, else CPU | "gpu" | "cpu"
@@ -22,6 +23,11 @@ initial_prompt = "Hallo, das ist ein Test. Okay, so let's see how this works, an
 # Fixed in tests: "Klot" -> "Claude", "Gmini" -> "Gemini"; "cloud" + "Claude" together work.
 # Keep the list short (it shares ~220 tokens with the prompt).
 vocabulary = ["Claude", "cloud", "Gemini", "VS Code", "iGPU"]
+
+[recording]
+# A recording with no speech for this long was probably forgotten: it stops by itself, and the
+# text is put in the clipboard (not pasted: you may be typing somewhere else by then). 0 = never.
+stop_after_silence_s = 60
 
 [paste]
 restore_delay_s = 0.3 # wait before restoring your old clipboard (raise if an app pastes the old text)

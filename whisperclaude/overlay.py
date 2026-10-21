@@ -376,7 +376,7 @@ class Overlay:
             self.show_recording()
         elif state is State.TRANSCRIBING:
             self.show_transcribing()
-        elif msg:
-            self.show_message(msg)
+        elif msg:  # longer messages stay longer (~13 characters per second, at least 2.5 s)
+            self.show_message(msg, max(MESSAGE_S, len(msg) * 0.075))
         else:
             self.hide()

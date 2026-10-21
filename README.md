@@ -17,7 +17,8 @@ measurements are documented in [`docs/PLAN.md`](docs/PLAN.md).
 ## What it does
 
 - **One key, any app.** A short tap of Left Ctrl starts and stops recording; Ctrl+C, Ctrl+click
-  and Ctrl+scroll don't trigger it. Your clipboard is restored after pasting.
+  and Ctrl+scroll don't trigger it. Your clipboard (text, images, files, ...) is restored after
+  pasting, and dictations stay out of the Win+V clipboard history.
 - **German and English, even mixed,** with good punctuation, automatic language detection and a
   custom vocabulary for names ("Claude", "VS Code").
 - **Formatting by voice.** Say "command new line", "command bullet", … to get line breaks,
@@ -51,7 +52,11 @@ sleep or a lock if Windows closed it meanwhile (two Task Scheduler tasks, no adm
 ## Usage
 
 1. Click into any text field and tap **Left Ctrl**. A pill shows level bars that follow your voice.
-2. Speak, then tap **Left Ctrl** again. The text is pasted a moment later.
+2. Speak, then tap **Left Ctrl** again. The text is pasted a moment later, even after minutes
+   of dictation (long recordings are transcribed while you speak).
+3. Changed your mind? **Esc** while recording throws the recording away. A recording you forgot
+   stops by itself after 60 s without speech; its text goes to the clipboard instead of being
+   pasted.
 
 The tray icon (under the **^** arrow next to the clock) shows the state; right-click it for
 status, config, restart, log and quit. **Quit** stays quit until your next login; after sleep
@@ -116,6 +121,8 @@ flowchart LR
   audio from being translated into one language.
 - **Two backends.** OpenVINO on the iGPU, or faster-whisper on the CPU if there is no GPU or
   loading it fails. Chosen at startup.
+- **Live transcription.** While you speak, every finished 30 s chunk is already transcribed,
+  so after the stop tap only the last one is left: a 5-minute dictation is pasted in under 1 s.
 - **Always responsive.** Hotkey, tray and pill come up first and the model loads in the
   background; a tap during loading says "still loading". After a wake from sleep the hotkey and
   audio devices are re-armed.
@@ -131,9 +138,8 @@ RAM is about 1.2 GB with the iGPU model loaded; idle CPU is about 1 % of one cor
 measurable effect on battery draw. Benchmarks behind each decision: [`docs/PLAN.md`](docs/PLAN.md).
 Logs (never containing transcripts): `%LOCALAPPDATA%\WhisperClaude\log.txt`.
 
-**Limitations:** Windows only; only text on the clipboard is restored (an image would be lost);
-no leading space when dictating after existing text; the NPU isn't used (OpenVINO's Whisper
-pipeline failed on it).
+**Limitations:** Windows only; no leading space when dictating after existing text; the NPU
+isn't used (OpenVINO's Whisper pipeline failed on it).
 
 ## Development
 
@@ -155,7 +161,7 @@ runtime; they keep their own licenses:
 |---|---|
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper), CTranslate2, ONNX Runtime, sounddevice, Whisper models ([OpenAI](https://github.com/openai/whisper), [Systran](https://huggingface.co/Systran/faster-whisper-small) and [OpenVINO](https://huggingface.co/OpenVINO) conversions), Silero VAD | MIT |
 | OpenVINO (+ GenAI, Tokenizers), Hugging Face tokenizers / huggingface_hub | Apache-2.0 |
-| NumPy, PyAV, psutil, pyperclip; Pillow | BSD; MIT-CMU |
+| NumPy, PyAV, psutil; Pillow | BSD; MIT-CMU |
 | [pynput](https://github.com/moses-palmer/pynput), [pystray](https://github.com/moses-palmer/pystray) | LGPL-3.0 (unmodified, installed separately) |
 
 "Wispr Flow" is mentioned only to describe the idea; this project is not affiliated with it.

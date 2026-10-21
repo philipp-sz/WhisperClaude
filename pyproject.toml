@@ -13,7 +13,6 @@ dependencies = [
     "numpy",
     "sounddevice",
     "pynput",
-    "pyperclip",
     "pystray",
     "pillow",
     "psutil",

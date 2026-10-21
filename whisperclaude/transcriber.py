@@ -14,13 +14,15 @@ from pathlib import Path
 
 import numpy as np
 from faster_whisper import BatchedInferencePipeline, WhisperModel
-from faster_whisper.vad import VadOptions, collect_chunks, get_speech_timestamps
+from faster_whisper.vad import VadOptions, get_speech_timestamps
 
 from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY, SAMPLE_RATE  # noqa: F401 (re-exported)
+from whisperclaude.textfix import join_chunks
 
 log = logging.getLogger(__name__)
 
 CHUNK_S = 30  # Whisper's window
+LIVE_MARGIN_S = 5  # live transcription leaves the newest audio alone (the VAD may still change it)
 OV_CACHE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "WhisperClaude" / "ov_cache"
 
 
@@ -35,17 +37,78 @@ def build_prompt(prompt: str | None, vocabulary: Sequence[str] = ()) -> str | No
     return f"{prompt} {words}." if prompt else f"{words}."
 
 
+def _speech_groups(audio: np.ndarray) -> list[list[dict]]:
+    """VAD speech segments ({"start", "end"} in samples), grouped into <= 30 s of speech.
+
+    Same greedy rule as faster-whisper's collect_chunks, whose metadata can't be used here: it
+    leaves out the first segment of every chunk after the first.
+    """
+    groups: list[list[dict]] = []
+    size = 0
+    for seg in get_speech_timestamps(audio, VadOptions(max_speech_duration_s=CHUNK_S)):
+        n = seg["end"] - seg["start"]
+        if groups and size + n <= CHUNK_S * SAMPLE_RATE:
+            groups[-1].append(seg)
+            size += n
+        else:
+            groups.append([seg])
+            size = n
+    return groups
+
+
+def _join(audio: np.ndarray, group: list[dict]) -> np.ndarray:
+    return np.concatenate([audio[s["start"]:s["end"]] for s in group])
+
+
 def speech_chunks(audio: np.ndarray) -> list[np.ndarray]:
     """Cut audio at speech pauses into <= 30 s chunks (silence dropped).
 
     Same as faster-whisper's batched pipeline: transcribing chunks without timestamps
     avoids both the capitals-after-pauses of timestamp mode and words cut at 30 s borders.
     """
-    speech = get_speech_timestamps(audio, VadOptions(max_speech_duration_s=CHUNK_S))
-    if not speech:
-        return []
-    chunks, _ = collect_chunks(audio, speech, max_duration=CHUNK_S)
-    return [c for c in chunks if len(c)]
+    return [_join(audio, g) for g in _speech_groups(audio)]
+
+
+class LiveTranscription:
+    """Transcribes a recording while it is still running, so stopping only waits for the end.
+
+    feed() gets the audio recorded so far (call it every few seconds from a worker thread). A
+    chunk is final once the VAD has started a later chunk after it: more audio can't change it
+    any more, so it is transcribed right away. finish() transcribes the rest. Long dictations
+    (minutes) then take ~1 s after the stop tap instead of ~1 s per 30 s of speech. Not
+    thread-safe: feed() and finish() must not overlap.
+    """
+
+    def __init__(self, transcribe_chunks: Callable[[list[np.ndarray]], str]) -> None:
+        self._transcribe_chunks = transcribe_chunks
+        self._done = 0  # samples already transcribed
+        self._texts: list[str] = []
+
+    @property
+    def done_s(self) -> float:
+        return self._done / SAMPLE_RATE
+
+    def feed(self, audio: np.ndarray) -> None:
+        tail = audio[self._done:]
+        if len(tail) < (CHUNK_S + LIVE_MARGIN_S) * SAMPLE_RATE:
+            return  # a finished chunk needs > 30 s of speech after self._done
+        limit = len(tail) - LIVE_MARGIN_S * SAMPLE_RATE
+        final = [g for g in _speech_groups(tail)[:-1] if g[-1]["end"] <= limit]
+        if final:
+            self._texts.append(self._transcribe_chunks([_join(tail, g) for g in final]))
+            self._done += final[-1][-1]["end"]
+
+    @staticmethod
+    def has_speech(audio: np.ndarray) -> bool:
+        """VAD check on a short piece of audio (for the forgotten-recording auto-stop)."""
+        return bool(get_speech_timestamps(np.asarray(audio, dtype=np.float32), VadOptions()))
+
+    def finish(self, audio: np.ndarray) -> str:
+        """Transcribe what feed() hasn't and return the whole text."""
+        rest = speech_chunks(np.asarray(audio[self._done:], dtype=np.float32))
+        if rest:
+            self._texts.append(self._transcribe_chunks(rest))
+        return join_chunks(self._texts)
 
 
 class Transcriber:
@@ -92,12 +155,32 @@ class Transcriber:
             vad_filter=True,
         )
         # segments is a lazy generator: the actual decoding happens here.
-        text = " ".join(s.text.strip() for s in segments).strip()
+        text = join_chunks(s.text for s in segments)
         return text, info.language
 
     def transcribe(self, audio: np.ndarray) -> str:
         """Return the transcript of a 1-D float32 array at 16 kHz."""
         return self.transcribe_detailed(audio)[0]
+
+    def transcribe_chunks(self, chunks: list[np.ndarray]) -> str:
+        """Transcribe chunks that are already cut (speech_chunks), batched like transcribe()."""
+        if not chunks:
+            return ""
+        bounds = np.cumsum([0] + [len(c) for c in chunks]) / SAMPLE_RATE
+        segments, _ = self.pipeline.transcribe(
+            np.concatenate(chunks).astype(np.float32),
+            language=self.language,
+            beam_size=self.beam_size,
+            batch_size=self.batch_size,
+            initial_prompt=self.initial_prompt,
+            without_timestamps=True,
+            clip_timestamps=[{"start": float(a), "end": float(b)}
+                             for a, b in zip(bounds[:-1], bounds[1:])],
+        )
+        return join_chunks(s.text for s in segments)
+
+    def live(self) -> LiveTranscription:
+        return LiveTranscription(self.transcribe_chunks)
 
 
 def ov_repo(model: str) -> str:
@@ -144,9 +227,13 @@ class OpenVinoTranscriber:
         OV_CACHE.mkdir(parents=True, exist_ok=True)
         # CACHE_DIR keeps the compiled GPU kernels: first start ~15 s, later < 1 s.
         self.pipeline = openvino_genai.WhisperPipeline(path, device, CACHE_DIR=str(OV_CACHE))
+        # The first dictation was ~0.8 s slower (GPU setup in the first generate(), VAD model
+        # loaded on first use): pay that here, on the loader thread.
+        silence = np.zeros(SAMPLE_RATE, np.float32)
+        speech_chunks(silence)
+        self._generate([silence])
 
-    def transcribe_detailed(self, audio: np.ndarray) -> tuple[str, str]:
-        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    def _generate(self, chunks: list[np.ndarray]) -> tuple[str, str]:
         cfg = self.pipeline.get_generation_config()
         cfg.task = "transcribe"
         cfg.return_timestamps = False
@@ -154,14 +241,23 @@ class OpenVinoTranscriber:
         if self.language:
             cfg.language = f"<|{self.language}|>"
         texts, language = [], ""
-        for chunk in speech_chunks(audio):
+        for chunk in chunks:
             result = self.pipeline.generate(chunk, cfg)
             texts.append(result.texts[0].strip())
             language = language or str(result.language or "").strip("<|>")
-        return " ".join(texts).strip(), language
+        return join_chunks(texts), language
+
+    def transcribe_detailed(self, audio: np.ndarray) -> tuple[str, str]:
+        return self._generate(speech_chunks(np.asarray(audio, dtype=np.float32).reshape(-1)))
 
     def transcribe(self, audio: np.ndarray) -> str:
         return self.transcribe_detailed(audio)[0]
+
+    def transcribe_chunks(self, chunks: list[np.ndarray]) -> str:
+        return self._generate(chunks)[0]
+
+    def live(self) -> LiveTranscription:
+        return LiveTranscription(self.transcribe_chunks)
 
 
 def create_transcriber(

@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 
+from whisperclaude import app as app_module
 from whisperclaude.app import QUIT, RESTART, SAMPLE_RATE, TOGGLE, App, State, WakeQueue
 
 
@@ -262,3 +263,138 @@ def test_failing_postprocess_falls_back_to_the_raw_text():
     app = App(FakeRecorder(), tr, pasted.append, postprocess=broken)
     run_cycle(app)
     assert pasted == ["raw words"]
+
+
+# ---------- live transcription while recording ----------
+
+class SnapshotRecorder(FakeRecorder):
+    def snapshot(self):
+        return np.zeros(SAMPLE_RATE, np.float32)
+
+
+class FakeLive:
+    def __init__(self, fail=False):
+        self.fail, self.feeds, self.finished = fail, 0, None
+
+    def feed(self, audio):
+        self.feeds += 1
+        if self.fail:
+            raise RuntimeError("GPU hiccup")
+
+    def finish(self, audio):
+        self.finished = len(audio)
+        return "live text"
+
+
+class LiveTranscriber(BlockingTranscriber):
+    def __init__(self, live):
+        super().__init__()
+        self.release.set()
+        self.made = live
+
+    def live(self):
+        return self.made
+
+
+def test_live_transcription_is_fed_while_recording_and_finished_at_the_stop(monkeypatch):
+    monkeypatch.setattr(app_module, "LIVE_FEED_S", 0.01)
+    live = FakeLive()
+    pasted = []
+    app = App(SnapshotRecorder(), LiveTranscriber(live), pasted.append)
+    app.handle(TOGGLE)
+    assert wait_for(lambda: live.feeds >= 2)
+    app.handle(TOGGLE)
+    finish(app)
+    assert pasted == ["live text"] and live.finished == SAMPLE_RATE
+    assert app.transcriber.calls == 0  # no second pass over the whole recording
+
+
+def test_failing_live_feed_still_finishes_at_the_stop(monkeypatch):
+    monkeypatch.setattr(app_module, "LIVE_FEED_S", 0.01)
+    live = FakeLive(fail=True)
+    pasted = []
+    app = App(SnapshotRecorder(), LiveTranscriber(live), pasted.append)
+    app.handle(TOGGLE)
+    assert wait_for(lambda: live.feeds >= 1)
+    app.handle(TOGGLE)
+    finish(app)
+    assert pasted == ["live text"] and live.feeds == 1  # feeding stopped after the error
+
+
+def test_failing_recorder_stop_returns_to_idle():
+    class BrokenStop(FakeRecorder):
+        def stop(self):
+            raise OSError("device unplugged")
+
+    app, states, _ = make_app(recorder=BrokenStop())
+    app.handle(TOGGLE)
+    app.handle(TOGGLE)
+    assert app.state is State.IDLE and "device unplugged" in states[-1][1]
+    app.handle(TOGGLE)
+    assert app.state is State.RECORDING  # not stuck
+
+
+# ---------- auto-stop of a forgotten recording ----------
+
+class SilentLive(FakeLive):
+    def __init__(self, speech):
+        super().__init__()
+        self.speech, self.checks = speech, 0
+
+    def has_speech(self, audio):
+        self.checks += 1
+        return self.speech
+
+
+def auto_app(monkeypatch, speech):
+    monkeypatch.setattr(app_module, "LIVE_FEED_S", 0.01)
+    live, pasted, copied, states = SilentLive(speech), [], [], []
+    app = App(SnapshotRecorder(), LiveTranscriber(live), pasted.append,
+              on_state=lambda s, msg="": states.append((s, msg)),
+              stop_after_silence_s=0.5, copy=copied.append)  # the fake mic always has 1 s
+    app.handle(TOGGLE)
+    return app, live, pasted, copied, states
+
+
+def test_silent_recording_stops_itself_and_copies_instead_of_pasting(monkeypatch):
+    app, live, pasted, copied, states = auto_app(monkeypatch, speech=False)
+    kind, payload = app.events.get(timeout=5)
+    assert kind == app_module.AUTO_STOP
+    app.handle(kind, payload)
+    assert app.state is State.TRANSCRIBING
+    finish(app)
+    assert copied == ["live text"] and pasted == []
+    assert states[-1] == (State.IDLE, "Stopped after 0 s of silence – text is in the clipboard")
+
+
+def test_recording_with_speech_keeps_going(monkeypatch):
+    app, live, pasted, _, _ = auto_app(monkeypatch, speech=True)
+    assert wait_for(lambda: live.checks >= 5)
+    assert app.events.empty() and app.state is State.RECORDING
+    app.handle(TOGGLE)
+    finish(app)
+    assert pasted == ["live text"]
+
+
+def test_auto_stop_after_a_manual_stop_is_ignored():
+    app, states, _ = make_app()
+    app.handle(app_module.AUTO_STOP)  # arrives late: the user already stopped
+    assert app.state is State.IDLE and states == []
+
+
+# ---------- cancel (Esc) ----------
+
+def test_cancel_discards_the_recording():
+    app, states, pasted = make_app()
+    app.handle(TOGGLE)
+    app.handle(app_module.CANCEL)
+    assert app.state is State.IDLE and states[-1] == (State.IDLE, "Cancelled")
+    assert app.transcriber.calls == 0 and pasted == []
+    app.handle(TOGGLE)
+    assert app.state is State.RECORDING  # next recording works
+
+
+def test_cancel_outside_a_recording_is_ignored():
+    app, states, _ = make_app()
+    app.handle(app_module.CANCEL)  # Esc pressed somewhere while idle
+    assert app.state is State.IDLE and states == []

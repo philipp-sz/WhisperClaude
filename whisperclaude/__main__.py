@@ -30,7 +30,7 @@ from whisperclaude.config import (CONFIG_PATH, CommandsConfig, Config, ConfigErr
                                   load_config)
 from whisperclaude import lifecycle
 from whisperclaude.hotkey import GapDetector, key_label, parse_key, start_hotkey_listener
-from whisperclaude.inserter import paste_text
+from whisperclaude.inserter import copy_text, paste_text
 from whisperclaude.overlay import Overlay, enable_dpi_awareness
 from whisperclaude.recorder import Recorder
 from whisperclaude.tray import Tray
@@ -208,8 +208,11 @@ def main() -> None:
     cmd = cfg.commands
     postprocess = ((lambda text: apply_commands(text, cmd.trigger, cmd.bullet))
                    if cmd.enabled else None)
-    app = App(recorder, None, paste, events, on_state, postprocess)  # starts in State.LOADING
-    listener = start_hotkey_listener(events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s)
+    app = App(recorder, None, paste, events, on_state, postprocess,  # starts in State.LOADING
+              stop_after_silence_s=cfg.recording.stop_after_silence_s, copy=copy_text)
+    listener = start_hotkey_listener(
+        events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s,
+        parse_key(cfg.hotkey.cancel_key) if cfg.hotkey.cancel_key else None)
     overlay.show_starting("Loading model…")
     log.info("UI, tray and hotkey up %.1f s after process start; loading the model",
              time.time() - psutil.Process().create_time())
@@ -264,7 +267,7 @@ def main() -> None:
     def backup_poll() -> None:
         now = time.monotonic()
         stall, last_poll[0] = now - last_poll[0] - BACKUP_POLL_MS / 1000, now
-        if 2.0 < stall < GapDetector().threshold_s:
+        if 2.0 < stall < gap.threshold_s:
             # The UI thread didn't get to run for a while (e.g. cold-disk DLL loading holds the
             # GIL during the model load at logon): the pill can't animate in that time.
             log.warning("UI thread was blocked for %.1f s", stall)

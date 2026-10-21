@@ -8,7 +8,7 @@ from typing import Callable
 from pynput import mouse
 from pynput.keyboard import Key, KeyCode, Listener
 
-from whisperclaude.app import TOGGLE
+from whisperclaude.app import CANCEL, TOGGLE
 
 DEFAULT_KEY = Key.ctrl_l
 MAX_HOLD_S = 0.5
@@ -79,18 +79,24 @@ class HotkeyListener:
     """
 
     def __init__(self, events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,
-                 max_hold: float = MAX_HOLD_S) -> None:
+                 max_hold: float = MAX_HOLD_S, cancel_key: Key | KeyCode | None = None) -> None:
         self._events, self._key, self._max_hold = events, key, max_hold
+        self._cancel_key = cancel_key
         self._start()
 
     def _start(self) -> None:
         tap = TapDetector(self._key, self._max_hold)
 
+        def on_press(k: Key | KeyCode | None) -> None:
+            tap.press(k)
+            if k is not None and k == self._cancel_key:  # App ignores it unless recording
+                self._events.put((CANCEL, None))
+
         def on_release(k: Key | KeyCode | None) -> None:
             if tap.release(k):
                 self._events.put((TOGGLE, None))
 
-        self._keyboard = Listener(on_press=tap.press, on_release=on_release)
+        self._keyboard = Listener(on_press=on_press, on_release=on_release)
         self._mouse = mouse.Listener(
             on_click=lambda x, y, button, pressed: tap.interrupt(),
             on_scroll=lambda x, y, dx, dy: tap.interrupt(),
@@ -130,6 +136,7 @@ class GapDetector:
 
 
 def start_hotkey_listener(events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,
-                          max_hold: float = MAX_HOLD_S) -> HotkeyListener:
+                          max_hold: float = MAX_HOLD_S,
+                          cancel_key: Key | KeyCode | None = None) -> HotkeyListener:
     """Start listening. Call .stop() on the result to end it."""
-    return HotkeyListener(events, key, max_hold)
+    return HotkeyListener(events, key, max_hold, cancel_key)

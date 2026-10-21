@@ -74,3 +74,24 @@ def test_commands_defaults_and_overrides(tmp_path):
 def test_commands_invalid(tmp_path, text, message):
     with pytest.raises(ConfigError, match=message):
         load_config(write(tmp_path, text))
+
+
+def test_recording_auto_stop(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[recording]\nstop_after_silence_s = 0\n", encoding="utf-8")
+    assert load_config(path).recording.stop_after_silence_s == 0.0
+    path.write_text("[recording]\nstop_after_silence_s = 5\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="stop_after_silence_s"):
+        load_config(path)
+
+
+def test_cancel_key(tmp_path):
+    path = tmp_path / "config.toml"
+    for text, ok in (('cancel_key = ""', True), ('cancel_key = "f8"', True),
+                     ('cancel_key = "ctrl_l"', False), ('cancel_key = "nope"', False)):
+        path.write_text(f"[hotkey]\n{text}\n", encoding="utf-8")
+        if ok:
+            load_config(path)
+        else:
+            with pytest.raises(ConfigError, match="cancel_key"):
+                load_config(path)
