@@ -118,11 +118,13 @@ flowchart LR
 - **Accuracy.** Cutting at speech pauses avoids stray capitals after pauses and words lost at
   Whisper's 30 s window edge. A punctuated bilingual example plus your vocabulary is given to the
   model as "previous text", which steers punctuation and spelling and keeps mixed German/English
-  audio from being translated into one language.
+  audio from being translated into one language. Passages are only merged into one chunk if
+  they're in the same language, since Whisper uses one language per chunk.
 - **Two backends.** OpenVINO on the iGPU, or faster-whisper on the CPU if there is no GPU or
   loading it fails. Chosen at startup.
 - **Live transcription.** While you speak, every finished 30 s chunk is already transcribed,
-  so after the stop tap only the last one is left: a 5-minute dictation is pasted in under 1 s.
+  so after the stop tap only the last one or two are left: a 5-minute dictation is pasted about
+  2 s after the stop tap, a short one in about 0.5 s.
 - **Always responsive.** Hotkey, tray and pill come up first and the model loads in the
   background; a tap during loading says "still loading". After a wake from sleep the hotkey and
   audio devices are re-armed.

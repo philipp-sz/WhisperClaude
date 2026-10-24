@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 
 CHUNK_S = 30  # Whisper's window
 LIVE_MARGIN_S = 5  # live transcription leaves the newest audio alone (the VAD may still change it)
+LIVE_MIN_TAIL_S = 15  # ... and only looks for finished chunks once this much is untranscribed
+LEAD_IN_S = 0.5  # silence put before every chunk (see _join)
 OV_CACHE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "WhisperClaude" / "ov_cache"
 
 
@@ -37,17 +39,43 @@ def build_prompt(prompt: str | None, vocabulary: Sequence[str] = ()) -> str | No
     return f"{prompt} {words}." if prompt else f"{words}."
 
 
-def _speech_groups(audio: np.ndarray) -> list[list[dict]]:
-    """VAD speech segments ({"start", "end"} in samples), grouped into <= 30 s of speech.
+Detect = Callable[[np.ndarray], str]  # audio -> language code (one cheap encoder pass)
 
-    Same greedy rule as faster-whisper's collect_chunks, whose metadata can't be used here: it
-    leaves out the first segment of every chunk after the first.
+
+def _speech_groups(audio: np.ndarray, detect: Detect | None = None, offset: int = 0,
+                   cache: dict | None = None, until: int | None = None) -> list[list[dict]]:
+    """VAD speech segments ({"start", "end"} in samples), grouped into chunks of <= 30 s.
+
+    A segment is speech between pauses of >= 2 s (longer stretches are split at 30 s). Whisper
+    picks one language per chunk, from its start: with segments merged blindly (as faster-
+    whisper does), a German passage after an English one in the same chunk was *translated*
+    into English. With `detect`, consecutive segments are only merged if they're in the same
+    language. One chunk per segment instead avoids that too, but short half-sentence chunks
+    made Whisper invent words (even "Command new paragraph" from the prompt). Test corpus with
+    mid-sentence pauses (scripts/eval_quality.py): merged blindly 10 % word errors and whole
+    passages translated, one per segment 6.7 %, by language 4.0 % (~0.26 s GPU per detected
+    segment; single-segment dictations skip it). `cache` keeps detected languages by absolute
+    start position (`offset` + sample) across live feeds. `until`: only segments that end
+    before this sample (live: a segment still being spoken is neither detected nor grouped;
+    its first second alone was detected wrongly).
     """
+    segments = get_speech_timestamps(audio, VadOptions(max_speech_duration_s=CHUNK_S))
+    if until is not None:
+        segments = [seg for seg in segments if seg["end"] <= until]
+    cache = {} if cache is None else cache
+
+    def language(seg: dict) -> str:
+        key = offset + seg["start"]  # not the end: it moves while the passage is still spoken
+        if key not in cache:
+            cache[key] = detect(audio[seg["start"]:seg["end"]])
+        return cache[key]
+
     groups: list[list[dict]] = []
     size = 0
-    for seg in get_speech_timestamps(audio, VadOptions(max_speech_duration_s=CHUNK_S)):
+    for seg in segments:
         n = seg["end"] - seg["start"]
-        if groups and size + n <= CHUNK_S * SAMPLE_RATE:
+        if (groups and size + n <= CHUNK_S * SAMPLE_RATE
+                and (detect is None or language(groups[-1][0]) == language(seg))):
             groups[-1].append(seg)
             size += n
         else:
@@ -57,16 +85,20 @@ def _speech_groups(audio: np.ndarray) -> list[list[dict]]:
 
 
 def _join(audio: np.ndarray, group: list[dict]) -> np.ndarray:
-    return np.concatenate([audio[s["start"]:s["end"]] for s in group])
+    """The group's speech, after LEAD_IN_S of silence: a chunk that starts right on a word
+    made Whisper skip its first words (130 mid-sentence cuts of the test corpus: 13 % lost 3+
+    words, 5 % with 0.3-0.5 s of silence first). Free: Whisper pads every chunk to 30 s."""
+    lead = np.zeros(int(LEAD_IN_S * SAMPLE_RATE), np.float32)
+    return np.concatenate([lead] + [audio[s["start"]:s["end"]] for s in group])
 
 
-def speech_chunks(audio: np.ndarray) -> list[np.ndarray]:
-    """Cut audio at speech pauses into <= 30 s chunks (silence dropped).
+def speech_chunks(audio: np.ndarray, detect: Detect | None = None) -> list[np.ndarray]:
+    """Cut audio at speech pauses into <= 30 s chunks (silence dropped), see _speech_groups.
 
-    Same as faster-whisper's batched pipeline: transcribing chunks without timestamps
-    avoids both the capitals-after-pauses of timestamp mode and words cut at 30 s borders.
+    Transcribing chunks without timestamps avoids both the capitals-after-pauses of timestamp
+    mode and words cut at 30 s borders.
     """
-    return [_join(audio, g) for g in _speech_groups(audio)]
+    return [_join(audio, g) for g in _speech_groups(audio, detect)]
 
 
 class LiveTranscription:
@@ -79,10 +111,16 @@ class LiveTranscription:
     thread-safe: feed() and finish() must not overlap.
     """
 
-    def __init__(self, transcribe_chunks: Callable[[list[np.ndarray]], str]) -> None:
+    def __init__(self, transcribe_chunks: Callable[[list[np.ndarray]], str],
+                 detect: Detect | None = None) -> None:
         self._transcribe_chunks = transcribe_chunks
+        self._detect = detect
+        self._languages: dict = {}  # detected once per segment, not on every feed
         self._done = 0  # samples already transcribed
         self._texts: list[str] = []
+
+    def _groups(self, tail: np.ndarray, until: int | None = None) -> list[list[dict]]:
+        return _speech_groups(tail, self._detect, self._done, self._languages, until)
 
     @property
     def done_s(self) -> float:
@@ -90,10 +128,10 @@ class LiveTranscription:
 
     def feed(self, audio: np.ndarray) -> None:
         tail = audio[self._done:]
-        if len(tail) < (CHUNK_S + LIVE_MARGIN_S) * SAMPLE_RATE:
-            return  # a finished chunk needs > 30 s of speech after self._done
-        limit = len(tail) - LIVE_MARGIN_S * SAMPLE_RATE
-        final = [g for g in _speech_groups(tail)[:-1] if g[-1]["end"] <= limit]
+        if len(tail) < LIVE_MIN_TAIL_S * SAMPLE_RATE:
+            return  # not worth a VAD pass yet
+        # Only finished segments; the last group may still be joined by the next one.
+        final = self._groups(tail, until=len(tail) - LIVE_MARGIN_S * SAMPLE_RATE)[:-1]
         if final:
             self._texts.append(self._transcribe_chunks([_join(tail, g) for g in final]))
             self._done += final[-1][-1]["end"]
@@ -105,7 +143,8 @@ class LiveTranscription:
 
     def finish(self, audio: np.ndarray) -> str:
         """Transcribe what feed() hasn't and return the whole text."""
-        rest = speech_chunks(np.asarray(audio[self._done:], dtype=np.float32))
+        tail = np.asarray(audio[self._done:], dtype=np.float32)
+        rest = [_join(tail, g) for g in self._groups(tail)]
         if rest:
             self._texts.append(self._transcribe_chunks(rest))
         return join_chunks(self._texts)
@@ -247,8 +286,19 @@ class OpenVinoTranscriber:
             language = language or str(result.language or "").strip("<|>")
         return join_chunks(texts), language
 
+    def detect_language(self, audio: np.ndarray) -> str:
+        """Spoken language of a short piece of audio: one encoder pass, no decoding."""
+        cfg = self.pipeline.get_generation_config()
+        cfg.task, cfg.return_timestamps, cfg.max_new_tokens = "transcribe", False, 1
+        return str(self.pipeline.generate(audio, cfg).language or "")
+
     def transcribe_detailed(self, audio: np.ndarray) -> tuple[str, str]:
-        return self._generate(speech_chunks(np.asarray(audio, dtype=np.float32).reshape(-1)))
+        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+        return self._generate(speech_chunks(audio, self._detect))
+
+    @property
+    def _detect(self) -> Detect | None:
+        return None if self.language else self.detect_language  # fixed language: no need
 
     def transcribe(self, audio: np.ndarray) -> str:
         return self.transcribe_detailed(audio)[0]
@@ -257,7 +307,7 @@ class OpenVinoTranscriber:
         return self._generate(chunks)[0]
 
     def live(self) -> LiveTranscription:
-        return LiveTranscription(self.transcribe_chunks)
+        return LiveTranscription(self.transcribe_chunks, self._detect)
 
 
 def create_transcriber(

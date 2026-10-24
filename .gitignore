@@ -3,3 +3,4 @@ __pycache__/
 *.egg-info/
 *.wav
 benchmark_results*.json
+bench_audio/*.json
