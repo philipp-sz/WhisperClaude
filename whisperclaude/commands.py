@@ -55,17 +55,6 @@ def _pattern(trigger: str) -> re.Pattern[str]:
         rf"(?<![\w-]){words}[ \t]*(?:{_WORDS})(?=[\s,.;:!?]|$)", re.IGNORECASE)
 
 
-def prompt_examples(trigger: str = "command") -> str:
-    """Example phrases for Whisper's prompt ("previous text").
-
-    Without them Whisper sometimes drops or glues a short phrase like "command bullet" in the
-    middle of a sentence (tested: 54/66 correct without, 66/66 with these examples on the iGPU
-    model). The examples never leak into normal speech or silence (also tested).
-    """
-    t = trigger.strip().capitalize()
-    return " " + " ".join(f"{t} {c}." for c in COMMANDS)
-
-
 def apply_commands(text: str, trigger: str = "command", bullet: str = "- ") -> str:
     """Replace "<trigger> <command>" pairs in the transcript. Text without any is returned as is.
 

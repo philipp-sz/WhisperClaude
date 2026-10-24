@@ -1,7 +1,7 @@
 """Spoken formatting commands: pure text in, text out. ('⏎' in the tables stands for a line break.)"""
 import pytest
 
-from whisperclaude.commands import COMMANDS, apply_commands, prompt_examples
+from whisperclaude.commands import apply_commands
 
 
 def nl(s: str) -> str:
@@ -154,13 +154,6 @@ def test_bullet_item_period_is_dropped_only_for_bullet_lines():
 def test_idempotent_on_its_own_output():
     out = apply_commands("A command new paragraph command bullet b command bullet c")
     assert apply_commands(out) == out
-
-
-def test_prompt_examples_cover_every_command():
-    examples = prompt_examples()
-    for c in COMMANDS:
-        assert f"Command {c}." in examples
-    assert prompt_examples("format").startswith(" Format new line.")
 
 
 def test_noun_guard_does_not_block_real_commands():

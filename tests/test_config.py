@@ -57,9 +57,11 @@ def test_invalid_values(tmp_path, text, message):
 # ---------- [commands] ----------
 
 def test_commands_defaults_and_overrides(tmp_path):
-    assert load_config(CONFIG_PATH).commands.trigger == "command"
-    cfg = load_config(write(tmp_path, '[commands]\nenabled = false\ntrigger = "please format"\nbullet = "* "\n'))
-    assert (cfg.commands.enabled, cfg.commands.trigger, cfg.commands.bullet) == (False, "please format", "* ")
+    shipped = load_config(CONFIG_PATH).commands
+    assert shipped.trigger == "command"
+    assert shipped.enabled is False and Config().commands.enabled is False  # opt-in
+    cfg = load_config(write(tmp_path, '[commands]\nenabled = true\ntrigger = "please format"\nbullet = "* "\n'))
+    assert (cfg.commands.enabled, cfg.commands.trigger, cfg.commands.bullet) == (True, "please format", "* ")
 
 
 @pytest.mark.parametrize("text, message", [

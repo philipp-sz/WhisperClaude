@@ -21,8 +21,9 @@ measurements are documented in [`docs/PLAN.md`](docs/PLAN.md).
   pasting, and dictations stay out of the Win+V clipboard history.
 - **German and English, even mixed,** with good punctuation, automatic language detection and a
   custom vocabulary for names ("Claude", "VS Code").
-- **Formatting by voice.** Say "command new line", "command bullet", … to get line breaks,
-  Markdown bullets and quotes while you dictate. Only these exact pairs are ever replaced.
+- **Formatting by voice (optional).** Say "command new line", "command bullet", … to get line
+  breaks, Markdown bullets and quotes while you dictate. Only these exact pairs are ever replaced.
+  Off by default.
 - **Private.** No cloud, no account, works offline after the first model download.
 - **Fast and light.** Uses the Intel iGPU if there is one, else the CPU. Negligible idle cost;
   starts silently at login with a tray icon.
@@ -68,8 +69,9 @@ or a lock the app comes back by itself unless you quit it.
 
 ### Formatting by voice
 
-Say the trigger word **command** followed by one of these (always in English, also while
-dictating German):
+Off by default: set `enabled = true` in the `[commands]` section of `config.toml`, then tray →
+**Restart**. Then say the trigger word **command** followed by one of these (always in English,
+also while dictating German):
 
 | You say | You get |
 |---|---|

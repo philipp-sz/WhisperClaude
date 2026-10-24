@@ -159,7 +159,7 @@ def worker(model_key: str, variants: list[dict]) -> None:
 
     from scripts.power import gpu_seconds
     from whisperclaude import transcriber as t
-    from whisperclaude.commands import prompt_examples
+    from whisperclaude.commands import COMMANDS
     from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY
 
     proc = psutil.Process()
@@ -175,9 +175,9 @@ def worker(model_key: str, variants: list[dict]) -> None:
             "gpu_pct": (gpu_seconds() - g0) / 30 * 100}
     emit({"model": model_key, "load_s": load_s, "rss_gb": rss, "idle": idle})
 
-    prompts = {"app": t.build_prompt(DEFAULT_PROMPT + prompt_examples("command"),
-                                     DEFAULT_VOCABULARY),
-               "no_cmd": t.build_prompt(DEFAULT_PROMPT, DEFAULT_VOCABULARY),
+    examples = " " + " ".join(f"Command {c}." for c in COMMANDS)  # the app's prompt until 10-24
+    prompts = {"app": t.build_prompt(DEFAULT_PROMPT, DEFAULT_VOCABULARY),
+               "cmd_examples": t.build_prompt(DEFAULT_PROMPT + examples, DEFAULT_VOCABULARY),
                "none": None}
     real = tr.pipeline
     data = clips()
@@ -277,7 +277,7 @@ def main() -> None:
     ap.add_argument("--variants", default="[]")
     ap.add_argument("--models", nargs="*", default=list(MODELS))
     ap.add_argument("--beams", nargs="*", type=int, default=[1, 5])
-    ap.add_argument("--prompts", nargs="*", default=["app", "no_cmd"])
+    ap.add_argument("--prompts", nargs="*", default=["app", "cmd_examples"])
     ap.add_argument("--pre", nargs="*", default=["none"])
     ap.add_argument("--pad", nargs="*", type=int, default=[])
     ap.add_argument("--chunk", nargs="*", default=[], help="chunking variants: app merge segment")

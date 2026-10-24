@@ -86,7 +86,7 @@ class PasteConfig:
 
 @dataclass(frozen=True)
 class CommandsConfig:
-    enabled: bool = True
+    enabled: bool = False  # opt-in: turn on in config.toml
     trigger: str = "command"  # say "<trigger> new line", "<trigger> bullet", ...
     bullet: str = "- "        # what "<trigger> bullet" writes at the start of the line
 

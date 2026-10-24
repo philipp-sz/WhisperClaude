@@ -40,6 +40,6 @@ restore_delay_s = 0.3 # wait before restoring your old clipboard (raise if an ap
 #   "command open quote" ... "command close quote" -> "..."
 # Nothing else is ever touched. A bullet item ends at the end of its sentence (or at the next
 # command); the text after it continues after a blank line.
-enabled = true
+enabled = false       # off by default: set to true to use the commands, then tray -> Restart
 trigger = "command"   # a plain word that doesn't occur before "new line", "bullet", ... in normal speech
 bullet = "- "         # Markdown list item; "* " or "• " also work

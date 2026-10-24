@@ -25,8 +25,8 @@ from pathlib import Path
 import psutil
 
 from whisperclaude.app import QUIT, RESTART, App, State, WakeQueue
-from whisperclaude.commands import apply_commands, prompt_examples
-from whisperclaude.config import (CONFIG_PATH, CommandsConfig, Config, ConfigError, ModelConfig,
+from whisperclaude.commands import apply_commands
+from whisperclaude.config import (CONFIG_PATH, Config, ConfigError, ModelConfig,
                                   load_config)
 from whisperclaude import lifecycle
 from whisperclaude.hotkey import GapDetector, key_label, parse_key, start_hotkey_listener
@@ -105,11 +105,14 @@ def spawn_new_instance() -> None:
                       RESTARTED_FLAG], cwd=CONFIG_PATH.parent, creationflags=flags, close_fds=True)
 
 
-def start_model_loading(events: WakeQueue, m: ModelConfig, c: CommandsConfig) -> None:
-    """Load the model on a thread; the outcome arrives as LOADED / LOAD_FAILED events."""
+def start_model_loading(events: WakeQueue, m: ModelConfig) -> None:
+    """Load the model on a thread; the outcome arrives as LOADED / LOAD_FAILED events.
+
+    The prompt has no "Command new line. Command bullet. ..." examples any more: on short,
+    unclear pieces of speech Whisper copied them ("Command. Command. Command." instead of what
+    was said; reproduced 3/66 with, 0/66 without). Commands still work without them.
+    """
     prompt = m.initial_prompt
-    if c.enabled and prompt:  # priming: stops Whisper dropping/gluing "command bullet" mid-sentence
-        prompt += prompt_examples(c.trigger)
 
     def run() -> None:
         try:
@@ -289,7 +292,7 @@ def main() -> None:
     root.bind(WAKE_EVENT, lambda e: pump())
     events.wake = lambda: root.event_generate(WAKE_EVENT, when="tail")
     root.after(BACKUP_POLL_MS, backup_poll)
-    start_model_loading(events, cfg.model, cfg.commands)
+    start_model_loading(events, cfg.model)
     root.mainloop()
 
 
