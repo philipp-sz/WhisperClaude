@@ -39,12 +39,12 @@ def test_broken_file_starts_fresh(tmp_path):
     assert json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))[0]["text"] == "neu"
 
 
-def test_menu_labels():
+def test_menu_preview_and_time():
     now = time.time()
     short = Entry(now, "Kurzer Text.")
-    assert short.label().endswith("· Kurzer Text.")
+    assert short.preview() == "Kurzer Text." and short.when() == time.strftime("%H:%M")
     long = Entry(now, "Ich glaube, ich würde es jetzt auch ein bisschen anders machen.\n" * 200)
-    label = long.label()
-    assert "…" in label and "\n" not in label and "(12,800 characters)" in label
+    assert long.preview().endswith("…") and "\n" not in long.preview()
+    assert long.when().endswith("· 12k")  # 12,800 characters: easy to spot in the menu
     old = Entry(now - 3 * 86400, "Alt")
-    assert time.strftime("%d.%m.", time.localtime(old.time)) in old.label()
+    assert old.when() == time.strftime("%d.%m. %H:%M", time.localtime(old.time))

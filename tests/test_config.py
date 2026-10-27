@@ -107,3 +107,15 @@ def test_history_keep(tmp_path):
     path.write_text("[history]\nkeep = 99\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="keep"):
         load_config(path)
+
+
+def test_tray_style(tmp_path):
+    from whisperclaude.config import TRAY_STYLES
+    from whisperclaude.tray_icons import STYLES
+    assert TRAY_STYLES == STYLES  # kept apart so config.py doesn't import PIL
+    path = tmp_path / "config.toml"
+    path.write_text('[tray]\nstyle = "classic"\n', encoding="utf-8")
+    assert load_config(path).tray.style == "classic"
+    path.write_text('[tray]\nstyle = "sparkles"\n', encoding="utf-8")
+    with pytest.raises(ConfigError, match="style"):
+        load_config(path)

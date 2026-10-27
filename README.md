@@ -64,8 +64,11 @@ sleep or a lock if Windows closed it meanwhile (two Task Scheduler tasks, no adm
    user and never uploaded; `[history] keep = 0` in `config.toml` turns this off and deletes the
    file. Dictations also appear in Win+V clipboard history (if enabled), never in cloud sync.
 
-The tray icon (under the **^** arrow next to the clock) shows the state; right-click it for
-status, config, restart, log and quit. **Quit** stays quit until your next login; after sleep
+The tray icon (under the **^** arrow next to the clock; drag it next to the clock to keep it in
+view) shows the state and is animated while you dictate: sound bars that follow your voice, a
+wave while transcribing, a check mark after pasting. `[tray] style` in `config.toml` switches
+between `bars`, `pulse`, `ring` and `classic` (the original static icon). Right-click it for
+status, recent dictations, settings, restart, log and quit. **Quit** stays quit until your next login; after sleep
 or a lock the app comes back by itself unless you quit it.
 
 <p align="center">

@@ -35,6 +35,12 @@ stop_after_silence_s = 60
 # e.g. when it was pasted while no text field had focus. 0 = off (also deletes the file).
 keep = 5
 
+[tray]
+# Look of the tray icon: "bars" (sound bars follow your voice), "pulse" (glows with your voice,
+# spinner while transcribing), "ring" (dark icon, colored status ring), or "classic" (the
+# original static icon). Animations only run while recording/transcribing.
+style = "bars"
+
 [paste]
 restore_delay_s = 0.3 # wait before restoring your old clipboard (raise if an app pastes the old text)
 

@@ -215,7 +215,7 @@ def main() -> None:
     history = History(data_dir, cfg.history.keep)
     hotkey = key_label(cfg.hotkey.key)
     tray = Tray(request_quit, request_restart, log_path, CONFIG_PATH, hotkey, history,
-                copy_to_clipboard)
+                copy_to_clipboard, style=cfg.tray.style, level_fn=lambda: recorder.level)
     tray.start()
 
     def remember(text: str) -> None:  # worker thread, before the paste
@@ -235,7 +235,8 @@ def main() -> None:
     app = App(recorder, None, paste, events, on_state, postprocess,  # starts in State.LOADING
               stop_after_silence_s=cfg.recording.stop_after_silence_s, copy=copy_text,
               remember=remember,
-              on_pasted=lambda text: overlay.show_pasted(lambda: copy_to_clipboard(text)))
+              on_pasted=lambda text: (overlay.show_pasted(lambda: copy_to_clipboard(text)),
+                                      tray.flash_pasted()))
     listener = start_hotkey_listener(
         events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s,
         parse_key(cfg.hotkey.cancel_key) if cfg.hotkey.cancel_key else None)

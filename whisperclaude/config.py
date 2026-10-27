@@ -11,6 +11,7 @@ from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 COMPUTE_TYPES = {"int8", "int8_float32", "int16", "float32"}
+TRAY_STYLES = ("classic", "pulse", "bars", "ring")  # = tray_icons.STYLES (not imported: PIL)
 DEVICES = {"auto", "gpu", "cpu"}
 
 
@@ -85,6 +86,14 @@ class HistoryConfig:
 
 
 @dataclass(frozen=True)
+class TrayConfig:
+    style: str = "bars"  # tray icon look, animated except "classic" (the original static icon)
+
+    def __post_init__(self) -> None:
+        _check(self.style in TRAY_STYLES, f"[tray] style must be one of {list(TRAY_STYLES)}")
+
+
+@dataclass(frozen=True)
 class PasteConfig:
     restore_delay_s: float = 0.3  # wait before restoring the old clipboard
 
@@ -112,12 +121,14 @@ class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     recording: RecordingConfig = field(default_factory=RecordingConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
+    tray: TrayConfig = field(default_factory=TrayConfig)
     paste: PasteConfig = field(default_factory=PasteConfig)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
 
 
 SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "recording": RecordingConfig,
-            "history": HistoryConfig, "paste": PasteConfig, "commands": CommandsConfig}
+            "history": HistoryConfig, "tray": TrayConfig, "paste": PasteConfig,
+            "commands": CommandsConfig}
 
 
 def _build(cls: type, raw: object, section: str):

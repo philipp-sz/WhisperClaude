@@ -27,15 +27,19 @@ class Entry:
     time: float  # Unix time
     text: str
 
-    def label(self, width: int = 45) -> str:
-        """Menu label: "12:20 · Ich glaube, ich würde es jetzt…  (11,209 characters)"."""
+    def preview(self, width: int = 42) -> str:
+        """The start of the text on one line: "Ich glaube, ich würde es jetzt auch…"."""
         one_line = " ".join(self.text.split())
-        preview = one_line if len(one_line) <= width else one_line[:width - 1].rstrip() + "…"
+        return one_line if len(one_line) <= width else one_line[:width - 1].rstrip() + "…"
+
+    def when(self) -> str:
+        """"12:20", "24.10. 12:20" if not today; long ones with their size: "12:20 · 11k"."""
         when = time.strftime("%H:%M", time.localtime(self.time))
-        if time.localtime(self.time)[:3] != time.localtime()[:3]:  # not today
+        if time.localtime(self.time)[:3] != time.localtime()[:3]:
             when = time.strftime("%d.%m. %H:%M", time.localtime(self.time))
-        size = f"  ({len(self.text):,} characters)" if len(one_line) > width else ""
-        return f"{when} · {preview}{size}"
+        if len(self.text) >= 2000:
+            when += f" · {len(self.text) // 1000}k"
+        return when
 
 
 class History:
