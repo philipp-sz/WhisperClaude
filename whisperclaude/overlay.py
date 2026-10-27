@@ -39,6 +39,8 @@ GREY = "#9aa0a6"
 GREEN = "#4caf50"
 RED = "#ff4d4f"
 AMBER = "#f5a623"
+BUTTON, BUTTON_HOVER = "#3c4043", "#5f6368"
+PASTED_S = 5.0  # how long the pill offers "Copy" after a paste
 ALPHA = 0.92
 MESSAGE_S = 2.5
 FRAME_MS = 33
@@ -141,6 +143,15 @@ class Overlay:
             self._hwnd, HWND_TOPMOST, 0, 0, 0, 0,
             SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
 
+    def _set_clickable(self, clickable: bool) -> None:
+        """Normally the pill is click-through (WS_EX_TRANSPARENT). While it offers "Copy" it
+        takes clicks; WS_EX_NOACTIVATE still keeps the focus in the user's app."""
+        user32 = ctypes.windll.user32
+        style = user32.GetWindowLongW(self._hwnd, GWL_EXSTYLE)
+        new = style & ~WS_EX_TRANSPARENT if clickable else style | WS_EX_TRANSPARENT
+        if new != style:
+            user32.SetWindowLongW(self._hwnd, GWL_EXSTYLE, new)
+
     def _no_activate(self) -> None:
         user32 = ctypes.windll.user32
         hwnd = self._hwnd = user32.GetParent(self.root.winfo_id())
@@ -215,6 +226,11 @@ class Overlay:
         self._frame_fn = None
         self.canvas.delete("content")
         self._dot = self._label = None
+        for event in ("<Button-1>", "<Enter>", "<Leave>"):
+            self.canvas.unbind(event)
+        self.canvas.configure(cursor="")
+        if self._hwnd:
+            self._set_clickable(False)
 
     def _text(self, x: float, text: str, color: str = FG) -> int:
         return self.canvas.create_text(x, self.h // 2, text=text, fill=color, font=self.font,
@@ -252,6 +268,55 @@ class Overlay:
         self._fade(ALPHA)
         if seconds is not None:
             self._after("hide", int(seconds * 1000), self.hide)
+
+    def show_pasted(self, on_copy: Callable[[], None], seconds: float = PASTED_S) -> None:
+        """After a paste: "✓ Pasted   ⧉ Copy" for a few seconds. A click copies the text
+        again, for when the paste went nowhere (no text field had focus). Hovering keeps the
+        pill open; clicking never takes the focus from the app below."""
+        self._clear()
+        s, h = self.scale, self.h
+        dot = self._make_dot(GREEN)
+        self._place_dot(dot, self.dot_d / 2)
+        tx = self.pad + self.dot_d + self.gap
+        self._text(tx, "Pasted")
+        # the "Copy" button: a smaller pill with a two-sheets icon
+        bx0 = tx + self.font.measure("Pasted") + 2 * self.gap
+        inset, bpad, icon = round(6 * s), round(10 * s), round(11 * s)
+        bh = h - 2 * inset
+        lx = bx0 + bpad + icon + round(6 * s)
+        bx1 = lx + self.font.measure("Copy") + bpad
+        c = self.canvas
+        c.create_oval(bx0, inset, bx0 + bh, h - inset, fill=BUTTON, outline="", tags=("content", "btn"))
+        c.create_oval(bx1 - bh, inset, bx1, h - inset, fill=BUTTON, outline="", tags=("content", "btn"))
+        c.create_rectangle(bx0 + bh / 2, inset, bx1 - bh / 2, h - inset, fill=BUTTON, outline="",
+                           tags=("content", "btn"))
+        ix, iy, sheet, off = bx0 + bpad, h / 2 - icon / 2, icon * 0.72, icon * 0.28
+        width = max(1.0, 1.4 * s)
+        c.create_rectangle(ix + off, iy, ix + off + sheet, iy + sheet, outline=FG, width=width,
+                           tags="content")
+        c.create_rectangle(ix, iy + off, ix + sheet, iy + off + sheet, outline=FG, width=width,
+                           fill=BUTTON, tags=("content", "btn"))
+        self._text(lx, "Copy")
+        self._set_width(bx1 + self.pad - inset)
+
+        def click(_event: object) -> None:
+            on_copy()
+
+        def enter(_event: object) -> None:
+            c.itemconfig("btn", fill=BUTTON_HOVER)
+            self._cancel("hide")
+
+        def leave(_event: object) -> None:
+            c.itemconfig("btn", fill=BUTTON)
+            self._after("hide", 1500, self.hide)
+
+        c.bind("<Button-1>", click)
+        c.bind("<Enter>", enter)
+        c.bind("<Leave>", leave)
+        c.configure(cursor="hand2")
+        self._set_clickable(True)
+        self._fade(ALPHA)
+        self._after("hide", int(seconds * 1000), self.hide)
 
     def show_recording(self) -> None:
         self._clear()

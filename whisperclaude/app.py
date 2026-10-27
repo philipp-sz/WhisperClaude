@@ -19,7 +19,8 @@ log = logging.getLogger(__name__)
 
 # Event kinds (queue items are (kind, payload) tuples)
 TOGGLE = "toggle"
-DONE = "done"    # payload: message for the user ("" = pasted fine)
+DONE = "done"    # payload: message for the user
+PASTED = "pasted"  # payload: the pasted text (the pill offers to copy it)
 ERROR = "error"  # payload: message
 QUIT = "quit"
 RESTART = "restart"  # quit and start a new instance (applies config.toml changes)
@@ -143,6 +144,8 @@ class App:
         postprocess: Callable[[str], str] | None = None,  # e.g. spoken formatting commands
         stop_after_silence_s: float = 0.0,  # auto-stop a forgotten recording; 0 = never
         copy: Callable[[str], None] | None = None,  # puts text in the clipboard (no paste)
+        remember: Callable[[str], None] | None = None,  # saves each transcript before pasting
+        on_pasted: Callable[[str], None] | None = None,  # after a paste (Tk thread)
     ) -> None:
         """transcriber=None starts in LOADING; call set_transcriber() once it's ready.
 
@@ -157,6 +160,8 @@ class App:
         self.postprocess = postprocess
         self.stop_after_silence_s = stop_after_silence_s
         self.copy = copy
+        self.remember = remember
+        self.on_pasted = on_pasted
         self.state = State.IDLE if transcriber is not None else State.LOADING
         self.exit_reason: str | None = None
         # Extra event kinds (e.g. "model loaded" from the loader thread) -> handler(payload)
@@ -199,6 +204,10 @@ class App:
                 self._stop_recording(auto=True)
         elif kind == DONE:
             self._set(State.IDLE, str(payload or ""))
+        elif kind == PASTED:
+            self._set(State.IDLE)
+            if self.on_pasted is not None:
+                self.on_pasted(str(payload))
         elif kind == ERROR:
             self._set(State.IDLE, f"Error: {payload}")
         elif kind in self.handlers:
@@ -264,6 +273,11 @@ class App:
                 text = self.postprocess(text)
             except Exception:
                 log.exception("postprocessing failed, pasting the raw transcript")
+        if self.remember is not None:
+            try:  # first: if the paste goes nowhere, the text is still in the history
+                self.remember(text)
+            except Exception:
+                log.exception("could not save the dictation to the history")
         to_clipboard = auto and self.copy is not None
         try:
             (self.copy if to_clipboard else self.paste)(text)
@@ -272,7 +286,10 @@ class App:
             self.events.put((ERROR, f"paste failed: {e}"))
             return
         log.info("%s %d characters", "copied" if to_clipboard else "pasted", len(text))  # privacy
-        self.events.put((DONE, f"{stopped} – text is in the clipboard" if to_clipboard else ""))
+        if to_clipboard:
+            self.events.put((DONE, f"{stopped} – text is in the clipboard"))
+        else:
+            self.events.put((PASTED, text))
 
     def process_pending(self) -> bool:
         """Handle all queued events without blocking (called from the Tk loop).

@@ -60,9 +60,12 @@ _GlobalUnlock = _api(_kernel32, "GlobalUnlock", wintypes.BOOL, wintypes.HGLOBAL)
 _GlobalSize = _api(_kernel32, "GlobalSize", ctypes.c_size_t, wintypes.HGLOBAL)
 _GlobalFree = _api(_kernel32, "GlobalFree", wintypes.HGLOBAL, wintypes.HGLOBAL)
 
-# Keep dictations out of Windows' clipboard history (Win+V) and cloud clipboard sync.
-_NO_HISTORY = [(_RegisterClipboardFormatW(name), (0).to_bytes(4, "little"))
-               for name in ("CanIncludeInClipboardHistory", "CanUploadToCloudClipboard")]
+# Dictations go into the local clipboard history (Win+V: a second safety net next to our own
+# history file) but never into the cloud clipboard sync. The restored old clipboard is kept
+# out of the history: it's in there already.
+_NO_CLOUD = [(_RegisterClipboardFormatW("CanUploadToCloudClipboard"), (0).to_bytes(4, "little"))]
+_NO_HISTORY = [(_RegisterClipboardFormatW("CanIncludeInClipboardHistory"),
+                (0).to_bytes(4, "little"))] + _NO_CLOUD
 
 Saved = list[tuple[int, bytes]]  # (format, data) pairs; [] = the clipboard was empty
 
@@ -136,7 +139,7 @@ def restore_clipboard(saved: Saved) -> None:
 
 
 def set_clipboard_text(text: str) -> None:
-    _write([(CF_UNICODETEXT, text.encode("utf-16-le") + b"\0\0")] + _NO_HISTORY)
+    _write([(CF_UNICODETEXT, text.encode("utf-16-le") + b"\0\0")] + _NO_CLOUD)
 
 
 def clipboard_text() -> str | None:
@@ -178,10 +181,8 @@ def to_clipboard_text(text: str) -> str:
 
 
 def copy_text(text: str) -> None:
-    """Leave text in the clipboard for the user to paste. Unlike a paste, it also goes into
-    the clipboard history (Win+V), so copying something else doesn't lose it."""
-    data = to_clipboard_text(text).encode("utf-16-le") + b"\0\0"
-    _write([(CF_UNICODETEXT, data)])
+    """Leave text in the clipboard for the user to paste (also in Win+V history, not cloud)."""
+    set_clipboard_text(to_clipboard_text(text))
 
 
 def paste_text(text: str, restore_delay: float = 0.3) -> None:

@@ -96,3 +96,18 @@ def test_real_clipboard_round_trip():
             assert {f for f, _ in content} <= {f for f, _ in inserter.save_clipboard()}
     finally:
         inserter.restore_clipboard(users)
+
+
+def test_dictation_goes_into_win_v_history_but_never_into_the_cloud():
+    users = inserter.save_clipboard()
+    no_history = inserter._RegisterClipboardFormatW("CanIncludeInClipboardHistory")
+    no_cloud = inserter._RegisterClipboardFormatW("CanUploadToCloudClipboard")
+    try:
+        inserter.set_clipboard_text("Diktat")
+        formats = {f for f, _ in inserter.save_clipboard()}
+        assert no_cloud in formats and no_history not in formats
+        inserter.restore_clipboard([(TEXT, "alt\0".encode("utf-16-le"))])
+        formats = {f for f, _ in inserter.save_clipboard()}
+        assert {no_cloud, no_history} <= formats  # the old content isn't a new history entry
+    finally:
+        inserter.restore_clipboard(users)

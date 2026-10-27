@@ -30,7 +30,8 @@ from whisperclaude.config import (CONFIG_PATH, Config, ConfigError, ModelConfig,
                                   load_config)
 from whisperclaude import lifecycle
 from whisperclaude.hotkey import GapDetector, key_label, parse_key, start_hotkey_listener
-from whisperclaude.inserter import copy_text, paste_text
+from whisperclaude.history import History
+from whisperclaude.inserter import ClipboardError, copy_text, paste_text
 from whisperclaude.overlay import Overlay, enable_dpi_awareness
 from whisperclaude.recorder import Recorder
 from whisperclaude.tray import Tray
@@ -50,6 +51,7 @@ HEARTBEAT_S = 60
 LOADED = "loaded"            # payload: transcriber
 LOAD_FAILED = "load_failed"  # payload: error text
 LOAD_STATUS = "load_status"  # payload: text for the start pill ("Preparing GPU…")
+COPIED = "copied"            # payload: feedback after "Copy" (pill button or tray menu)
 
 
 def setup_logging() -> Path:
@@ -193,13 +195,32 @@ def main() -> None:
     def request_restart() -> None:
         events.put((RESTART, None))
 
-    signal.signal(signal.SIGINT, lambda *_: request_quit())  # Ctrl+C in the console
-    if hasattr(signal, "SIGBREAK"):  # Ctrl+Break; also an external "quit" trigger for tests
-        signal.signal(signal.SIGBREAK, lambda *_: request_quit())
+    def on_signal(signum: int, _frame: object) -> None:
+        log.info("quit requested by signal %s", signal.Signals(signum).name)
+        request_quit()
 
+    signal.signal(signal.SIGINT, on_signal)  # Ctrl+C in the console
+    if hasattr(signal, "SIGBREAK"):  # Ctrl+Break; also an external "quit" trigger for tests
+        signal.signal(signal.SIGBREAK, on_signal)
+
+    def copy_to_clipboard(text: str) -> None:  # thread-safe: pill (Tk) or tray menu thread
+        try:
+            copy_text(text)
+            log.info("copied a dictation from the history (%d characters)", len(text))
+            events.put((COPIED, "Copied – paste with Ctrl+V"))
+        except ClipboardError:
+            log.warning("copy failed", exc_info=True)
+            events.put((COPIED, "Copy failed – clipboard busy, try again"))
+
+    history = History(data_dir, cfg.history.keep)
     hotkey = key_label(cfg.hotkey.key)
-    tray = Tray(request_quit, request_restart, log_path, CONFIG_PATH, hotkey)
+    tray = Tray(request_quit, request_restart, log_path, CONFIG_PATH, hotkey, history,
+                copy_to_clipboard)
     tray.start()
+
+    def remember(text: str) -> None:  # worker thread, before the paste
+        history.add(text)
+        tray.refresh()
 
     def on_state(state: State, msg: str = "") -> None:
         overlay.set_state(state, msg)
@@ -212,7 +233,9 @@ def main() -> None:
     postprocess = ((lambda text: apply_commands(text, cmd.trigger, cmd.bullet))
                    if cmd.enabled else None)
     app = App(recorder, None, paste, events, on_state, postprocess,  # starts in State.LOADING
-              stop_after_silence_s=cfg.recording.stop_after_silence_s, copy=copy_text)
+              stop_after_silence_s=cfg.recording.stop_after_silence_s, copy=copy_text,
+              remember=remember,
+              on_pasted=lambda text: overlay.show_pasted(lambda: copy_to_clipboard(text)))
     listener = start_hotkey_listener(
         events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s,
         parse_key(cfg.hotkey.cancel_key) if cfg.hotkey.cancel_key else None)
@@ -239,6 +262,8 @@ def main() -> None:
         LOADED: on_loaded,
         LOAD_FAILED: on_load_failed,
         LOAD_STATUS: lambda text: overlay.set_starting_text(str(text)),
+        # feedback only when idle: never replace the recording / transcribing pill
+        COPIED: lambda msg: overlay.show_message(str(msg)) if app.state is State.IDLE else None,
     }
 
     stopped = False

@@ -398,3 +398,32 @@ def test_cancel_outside_a_recording_is_ignored():
     app, states, _ = make_app()
     app.handle(app_module.CANCEL)  # Esc pressed somewhere while idle
     assert app.state is State.IDLE and states == []
+
+
+# ---------- history and the pill's "Copy" offer ----------
+
+def test_transcript_is_saved_before_the_paste_and_offered_for_copying():
+    order, offered = [], []
+    tr = BlockingTranscriber(text="wichtiger Text")
+    tr.release.set()
+    app = App(FakeRecorder(), tr, lambda t: order.append(("paste", t)),
+              remember=lambda t: order.append(("saved", t)), on_pasted=offered.append)
+    app.handle(TOGGLE)
+    app.handle(TOGGLE)
+    finish(app)
+    assert order == [("saved", "wichtiger Text"), ("paste", "wichtiger Text")]
+    assert offered == ["wichtiger Text"] and app.state is State.IDLE
+
+
+def test_failing_history_does_not_stop_the_paste():
+    def broken(text):
+        raise OSError("disk full")
+
+    pasted = []
+    tr = BlockingTranscriber(text="text")
+    tr.release.set()
+    app = App(FakeRecorder(), tr, pasted.append, remember=broken)
+    app.handle(TOGGLE)
+    app.handle(TOGGLE)
+    finish(app)
+    assert pasted == ["text"]

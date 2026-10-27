@@ -97,3 +97,13 @@ def test_cancel_key(tmp_path):
         else:
             with pytest.raises(ConfigError, match="cancel_key"):
                 load_config(path)
+
+
+def test_history_keep(tmp_path):
+    path = tmp_path / "config.toml"
+    assert load_config(CONFIG_PATH).history.keep == 5  # on by default
+    path.write_text("[history]\nkeep = 0\n", encoding="utf-8")
+    assert load_config(path).history.keep == 0
+    path.write_text("[history]\nkeep = 99\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="keep"):
+        load_config(path)

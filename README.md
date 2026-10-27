@@ -58,6 +58,11 @@ sleep or a lock if Windows closed it meanwhile (two Task Scheduler tasks, no adm
 3. Changed your mind? **Esc** while recording throws the recording away. A recording you forgot
    stops by itself after 60 s without speech; its text goes to the clipboard instead of being
    pasted.
+4. No text field had focus? Nothing is lost: after each paste the pill shows **Copy** for 5 s,
+   and the tray menu **Recent dictations** keeps your last 5 dictations (click one to copy it).
+   They're saved in `%LOCALAPPDATA%\WhisperClaude\history.json`, readable only by your Windows
+   user and never uploaded; `[history] keep = 0` in `config.toml` turns this off and deletes the
+   file. Dictations also appear in Win+V clipboard history (if enabled), never in cloud sync.
 
 The tray icon (under the **^** arrow next to the clock) shows the state; right-click it for
 status, config, restart, log and quit. **Quit** stays quit until your next login; after sleep

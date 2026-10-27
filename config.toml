@@ -29,6 +29,12 @@ vocabulary = ["Claude", "cloud", "Gemini", "VS Code", "iGPU"]
 # text is put in the clipboard (not pasted: you may be typing somewhere else by then). 0 = never.
 stop_after_silence_s = 60
 
+[history]
+# The last dictations are saved locally (%LOCALAPPDATA%\WhisperClaude\history.json, only your
+# Windows user can read it; never uploaded). Tray icon -> "Recent dictations" copies one back,
+# e.g. when it was pasted while no text field had focus. 0 = off (also deletes the file).
+keep = 5
+
 [paste]
 restore_delay_s = 0.3 # wait before restoring your old clipboard (raise if an app pastes the old text)
 

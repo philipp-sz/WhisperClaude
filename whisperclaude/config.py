@@ -77,6 +77,14 @@ class RecordingConfig:
 
 
 @dataclass(frozen=True)
+class HistoryConfig:
+    keep: int = 5  # last dictations saved locally (tray "Recent dictations"); 0 = off
+
+    def __post_init__(self) -> None:
+        _check(0 <= self.keep <= 50, "[history] keep must be 0 (off) to 50")
+
+
+@dataclass(frozen=True)
 class PasteConfig:
     restore_delay_s: float = 0.3  # wait before restoring the old clipboard
 
@@ -103,12 +111,13 @@ class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     recording: RecordingConfig = field(default_factory=RecordingConfig)
+    history: HistoryConfig = field(default_factory=HistoryConfig)
     paste: PasteConfig = field(default_factory=PasteConfig)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
 
 
 SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "recording": RecordingConfig,
-            "paste": PasteConfig, "commands": CommandsConfig}
+            "history": HistoryConfig, "paste": PasteConfig, "commands": CommandsConfig}
 
 
 def _build(cls: type, raw: object, section: str):
