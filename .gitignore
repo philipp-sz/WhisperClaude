@@ -4,3 +4,4 @@ __pycache__/
 *.wav
 benchmark_results*.json
 bench_audio/*.json
+CLAUDE.md

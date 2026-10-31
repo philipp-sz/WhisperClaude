@@ -1,7 +1,7 @@
 """Speech-to-text backends: load the model once, transcribe 16 kHz mono float32 audio.
 
 - OpenVinoTranscriber: Whisper on the Intel iGPU via OpenVINO GenAI (~10x faster, ~half the
-  energy per dictation, and fast enough for large-v3-turbo; see docs/PLAN.md).
+  energy per dictation, and fast enough for large-v3-turbo; see docs/decisions.md).
 - Transcriber: faster-whisper on the CPU (fallback when there's no usable GPU).
 create_transcriber() picks one based on the hardware.
 """
@@ -153,7 +153,7 @@ class LiveTranscription:
 class Transcriber:
     """faster-whisper on the CPU.
 
-    Defaults come from the benchmarks in docs/PLAN.md: small, greedy decoding, 4 threads
+    Defaults come from the benchmarks in docs/decisions.md: small, greedy decoding, 4 threads
     (8 was slower for small on the P/E-core CPU).
     """
 

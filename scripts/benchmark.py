@@ -153,7 +153,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rerecord", action="store_true")
     ap.add_argument("--models", nargs="+", default=MODELS)
-    # 4 = faster-whisper's default; 8 was slower for small (P/E-core mix), see PLAN.md
+    # 4 = faster-whisper's default; 8 was slower for small (P/E-core mix), see docs/decisions.md
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--beams", type=int, nargs="+", default=[5])
     ap.add_argument("--worker", help=argparse.SUPPRESS)

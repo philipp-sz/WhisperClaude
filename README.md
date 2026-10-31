@@ -1,37 +1,14 @@
 # WhisperClaude
 
-**Dictate into any Windows app, locally and fast.** Tap **Left Ctrl**, speak (German, English or
-both), tap again: the text appears in whatever text field has focus. Word, browser, chat, editor.
-
-Most dictation tools process your voice in the cloud. WhisperClaude runs OpenAI's Whisper model
-on your own laptop, so your audio never leaves it, and a 10-second sentence takes about a third
-of a second on an Intel iGPU. Inspired by Wispr Flow.
+WhisperClaude is a dictation tool for Windows that runs OpenAI's Whisper locally. A tap on Left Ctrl starts recording, a second tap stops it, and the transcript is pasted into the text field that has focus. It handles German, English and both mixed in one dictation. Audio never leaves the computer. On an Intel Core Ultra 7 258V with its Arc 140V iGPU, 10 s of speech is transcribed in 0.38 s.
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="Status pill: loading, ready, recording with live level bars, transcribing" width="300">
 </p>
 
-Built with [Claude Code](https://claude.com/claude-code). Every decision and its
-measurements are documented in [`docs/PLAN.md`](docs/PLAN.md).
+## Usage
 
-## What it does
-
-- **One key, any app.** A short tap of Left Ctrl starts and stops recording; Ctrl+C, Ctrl+click
-  and Ctrl+scroll don't trigger it. Your clipboard (text, images, files, ...) is restored after
-  pasting, and dictations stay out of the Win+V clipboard history.
-- **German and English, even mixed,** with good punctuation, automatic language detection and a
-  custom vocabulary for names ("Claude", "VS Code").
-- **Formatting by voice (optional).** Say "command new line", "command bullet", … to get line
-  breaks, Markdown bullets and quotes while you dictate. Only these exact pairs are ever replaced.
-  Off by default.
-- **Private.** No cloud, no account, works offline after the first model download.
-- **Fast and light.** Uses the Intel iGPU if there is one, else the CPU. Negligible idle cost;
-  starts silently at login with a tray icon.
-
-## Installation
-
-Windows 11 (10 untested), Python 3.12+, about 2 GB for the models. An Intel GPU/iGPU (Core Ultra,
-Arc) is optional; without one the CPU is used.
+Requirements: Windows 11, Python 3.12 or newer and about 2 GB of disk space for the models. An Intel GPU or iGPU (Core Ultra, Arc) is optional. Without one, the CPU is used.
 
 ```powershell
 git clone https://github.com/philipp-sz/WhisperClaude.git
@@ -41,117 +18,84 @@ py -m venv .venv
 .venv\Scripts\python.exe -m whisperclaude
 ```
 
-The last command is a first run with a console, to watch the model download (on an iGPU also a
-one-time ~15 s compile). To start it automatically at every login, and to bring it back after
-sleep or a lock if Windows closed it meanwhile (two Task Scheduler tasks, no admin rights):
+The first run downloads the model. On an iGPU it also compiles the model once, which takes about 15 s. Autostart registers two Task Scheduler tasks without admin rights. One starts the app at login. The other restarts it after an unlock or a wake from sleep if Windows closed it.
 
 ```powershell
 .venv\Scripts\python.exe scripts\install_autostart.py            # install and start
 .venv\Scripts\python.exe scripts\install_autostart.py --remove   # uninstall
 ```
 
-## Usage
+### Dictating
 
-1. Click into any text field and tap **Left Ctrl**. A pill shows level bars that follow your voice.
-2. Speak, then tap **Left Ctrl** again. The text is pasted a moment later, even after minutes
-   of dictation (long recordings are transcribed while you speak).
-3. Changed your mind? **Esc** while recording throws the recording away. A recording you forgot
-   stops by itself after 60 s without speech; its text goes to the clipboard instead of being
-   pasted.
-4. No text field had focus? Nothing is lost: after each paste the pill shows **Copy** for 5 s,
-   and the tray menu **Recent dictations** keeps your last 5 dictations (click one to copy it).
-   They're saved in `%LOCALAPPDATA%\WhisperClaude\history.json`, readable only by your Windows
-   user and never uploaded; `[history] keep = 0` in `config.toml` turns this off and deletes the
-   file. Dictations also appear in Win+V clipboard history (if enabled), never in cloud sync.
+1. Click into a text field and tap Left Ctrl. A status pill shows level bars that follow the voice.
+2. Speak, then tap Left Ctrl again. The text is pasted 0.5 s later for a short dictation and 1.3–2.4 s later for a 5-minute dictation.
+3. Esc during recording discards the recording. After 60 s without speech the recording stops by itself, and the text goes to the clipboard instead of being pasted.
+4. After each paste the pill shows a Copy button for 5 s. The tray menu entry "Recent dictations" keeps the last 5 dictations.
 
-The tray icon (under the **^** arrow next to the clock; drag it next to the clock to keep it in
-view) shows the state and is animated while you dictate: sound bars that follow your voice, a
-wave while transcribing, a check mark after pasting. `[tray] style` in `config.toml` switches
-between `bars`, `pulse`, `ring` and `classic` (the original static icon). Right-click it for
-status, recent dictations, settings, restart, log and quit. **Quit** stays quit until your next login; after sleep
-or a lock the app comes back by itself unless you quit it.
+The tray icon shows the state: loading, ready, recording, transcribing and pasted. Its menu has status, recent dictations, settings, restart, log and quit.
 
 <p align="center">
   <img src="docs/images/tray-icons.png" alt="Tray icon states: grey loading, green ready, red recording, amber transcribing" width="320">
 </p>
 
+All settings are in the commented [`config.toml`](config.toml): hotkey, device, models, language, vocabulary, auto-stop, history, tray icon style and spoken commands. Tray → Restart (apply config) applies changes.
+
 ### Formatting by voice
 
-Off by default: set `enabled = true` in the `[commands]` section of `config.toml`, then tray →
-**Restart**. Then say the trigger word **command** followed by one of these (always in English,
-also while dictating German):
+Spoken commands are off by default. Set `enabled = true` in the `[commands]` section of `config.toml` to use them. A command is the trigger word "command" followed by a command word, always in English:
 
-| You say | You get |
+| Spoken | Result |
 |---|---|
-| `command new line` | a line break |
-| `command new paragraph` | a blank line |
-| `command bullet` | a new line starting with `- ` (Markdown list item) |
-| `command separator` | a Markdown separator `---` with a blank line above and below |
+| `command new line` | line break |
+| `command new paragraph` | blank line |
+| `command bullet` | new line starting with `- ` |
+| `command separator` | `---` with a blank line above and below |
 | `command open quote` … `command close quote` | `"…"` |
 
-For example "My shopping list. Command bullet milk. Command bullet eggs. That is all." becomes:
+A bullet item ends at the end of its sentence. Sentences that only contain "new line" or "bullet" stay unchanged, and so does "command" after a determiner ("the command bullet"). A misheard command stays in the text.
 
-```
-My shopping list.
-- milk
-- eggs
+## Features
 
-That is all.
-```
-
-A bullet item ends at the end of its sentence, and the text after it starts after a blank line
-(which is also what ends a list in Markdown). Because
-a command is always trigger + command word, sentences that merely contain "new line" or "bullet"
-are left alone, and so is "command" used as an ordinary noun ("the command bullet by bullet").
-If Whisper mishears a command it simply stays in the text, where you can see and fix it. The trigger word, the bullet character and an on/off switch are in the `[commands]`
-section of `config.toml`.
-
-Settings (hotkey, device, language, vocabulary, …) are in the commented
-[`config.toml`](config.toml). After editing, use tray → **Restart (apply config)**.
+- System-wide hotkey. Left Ctrl alone toggles recording. Ctrl+C, Ctrl+click and Ctrl+scroll do not.
+- German, English and mixed dictation with automatic language detection.
+- Custom vocabulary for names and technical terms.
+- Live transcription. Finished 30 s chunks are transcribed while recording continues.
+- The previous clipboard is restored after pasting, including images and files. Dictations are never synced to the cloud clipboard.
+- Local history of the last 5 dictations in `%LOCALAPPDATA%\WhisperClaude\history.json`, readable only by the Windows user. `[history] keep = 0` turns it off and deletes the file.
+- Works offline after the first model download. Logs never contain transcript text.
+- 0.3–0.6% of one CPU core and 0% GPU while idle.
 
 ## How it works
 
 ```mermaid
 flowchart LR
     A([Tap Left Ctrl]) --> B[Record mic<br/>16 kHz mono]
-    B --> C([Tap Left Ctrl])
-    C --> D[Voice activity detection<br/>cut at pauses, ≤ 30 s chunks]
-    D --> E{Intel GPU<br/>available?}
-    E -- yes --> F[Whisper large-v3-turbo<br/>iGPU via OpenVINO]
-    E -- no --> G[Whisper small<br/>CPU via faster-whisper]
-    F --> H[Text]
-    G --> H
-    H --> I[Clipboard + Ctrl+V<br/>into the focused app]
-    I --> J[Restore the<br/>old clipboard]
+    B --> C[Every 5 s: voice activity<br/>detection, split at pauses]
+    C --> D[Group segments into ≤ 30 s chunks<br/>same language only, 0.5 s lead-in]
+    D --> E[Transcribe finished chunks<br/>while recording]
+    E --> F([Tap Left Ctrl])
+    F --> G[Transcribe the<br/>remaining chunks]
+    G --> H[Text fixes, optional<br/>spoken commands]
+    H --> I[Save to history]
+    I --> J[Clipboard + Ctrl+V<br/>into the focused app]
+    J --> K[Restore the<br/>old clipboard]
 ```
 
-- **Accuracy.** Cutting at speech pauses avoids stray capitals after pauses and words lost at
-  Whisper's 30 s window edge. A punctuated bilingual example plus your vocabulary is given to the
-  model as "previous text", which steers punctuation and spelling and keeps mixed German/English
-  audio from being translated into one language. Passages are only merged into one chunk if
-  they're in the same language, since Whisper uses one language per chunk.
-- **Two backends.** OpenVINO on the iGPU, or faster-whisper on the CPU if there is no GPU or
-  loading it fails. Chosen at startup.
-- **Live transcription.** While you speak, every finished 30 s chunk is already transcribed,
-  so after the stop tap only the last one or two are left: a 5-minute dictation is pasted about
-  2 s after the stop tap, a short one in about 0.5 s.
-- **Always responsive.** Hotkey, tray and pill come up first and the model loads in the
-  background; a tap during loading says "still loading". After a wake from sleep the hotkey and
-  audio devices are re-armed.
+At startup the app selects the backend. If OpenVINO finds an Intel GPU, it loads Whisper `large-v3-turbo` (int8) through OpenVINO GenAI. Otherwise, or if loading fails, it loads Whisper `small` (int8) on the CPU through faster-whisper. The hotkey, tray and pill start first, and the model loads in the background.
 
-Measured on an Intel Core Ultra 7 258V (Arc 140V iGPU), on battery:
+Voice activity detection cuts the audio at pauses, so no chunk crosses Whisper's 30 s window. Whisper detects one language per chunk. On the iGPU path, segments are therefore merged only if their detected language matches. Otherwise Whisper would translate the second language. Each chunk starts with 0.5 s of silence, which keeps Whisper from skipping the first words. A punctuated German and English example sentence plus the custom vocabulary is passed as the prompt. It sets the punctuation style and the spelling of names.
 
-| Backend | 10 s audio | 60 s audio | Extra energy per 60 s dictation |
-|---|---|---|---|
-| faster-whisper small, CPU | 3.6 s | 6.9 s | ~38 J |
-| **OpenVINO large-v3-turbo, iGPU** | **0.33 s** | **1.5 s** | **~19 J** |
+### Measurements
 
-RAM is about 1.2 GB with the iGPU model loaded; idle CPU is about 1 % of one core, with no
-measurable effect on battery draw. Benchmarks behind each decision: [`docs/PLAN.md`](docs/PLAN.md).
-Logs (never containing transcripts): `%LOCALAPPDATA%\WhisperClaude\log.txt`.
+Intel Core Ultra 7 258V with Arc 140V iGPU, on battery:
 
-**Limitations:** Windows only; no leading space when dictating after existing text; the NPU
-isn't used (OpenVINO's Whisper pipeline failed on it).
+| | OpenVINO `large-v3-turbo`, Arc 140V iGPU | faster-whisper `small`, Core Ultra 7 258V CPU |
+|---|---|---|
+| 10 s clip | 0.38 s | 3.6 s |
+| 5-minute dictation, stop tap to text | 1.3–2.4 s | 6.6 s |
+| Word error rate, own voice, short clips / long dictations | 3.4% / 4.0% | not measured |
+
+On the iGPU, transcription uses 2.3 s of GPU time per minute of audio, an estimated 20 J of extra energy. Measurements and the reasons for each choice are in [`docs/decisions.md`](docs/decisions.md).
 
 ## Development
 
@@ -161,13 +105,21 @@ isn't used (OpenVINO's Whisper pipeline failed on it).
 .venv\Scripts\python.exe -m pytest -m slow  # real models on CPU and (if present) iGPU
 ```
 
-The slow tests need two short clips of your own voice. They aren't in the repo (`*.wav` is
-git-ignored); without them the tests are skipped and print the `scripts/record_clip.py` command.
+The slow tests need two short recordings of the user's voice, made with `scripts/record_clip.py`. Recordings are git-ignored. Without them the slow tests are skipped.
+
+## Limitations
+
+- Windows only.
+- No leading space is inserted when dictating after existing text. The app cannot read the content of the text field.
+- The NPU is not used, because OpenVINO 2026.4's Whisper pipeline crashes on it.
+- The CPU path merges chunks without language detection, so mixed German and English can be translated into one language.
+- The first 0.2–0.4 s after the start tap can be lost while the microphone opens.
+
+Built with Claude Code. The author specified features, tested and reported bugs. The name refers to Claude Code.
 
 ## License
 
-MIT, see [LICENSE.md](LICENSE.md). Dependencies are installed via pip and models downloaded at
-runtime; they keep their own licenses:
+MIT, see [LICENSE.md](LICENSE.md). Dependencies are installed with pip and models are downloaded at runtime. They keep their own licenses:
 
 | Component | License |
 |---|---|
@@ -176,4 +128,4 @@ runtime; they keep their own licenses:
 | NumPy, PyAV, psutil; Pillow | BSD; MIT-CMU |
 | [pynput](https://github.com/moses-palmer/pynput), [pystray](https://github.com/moses-palmer/pystray) | LGPL-3.0 (unmodified, installed separately) |
 
-"Wispr Flow" is mentioned only to describe the idea; this project is not affiliated with it.
+This project is not affiliated with Wispr Flow.
