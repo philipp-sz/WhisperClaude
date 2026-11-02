@@ -119,3 +119,14 @@ def test_tray_style(tmp_path):
     path.write_text('[tray]\nstyle = "sparkles"\n', encoding="utf-8")
     with pytest.raises(ConfigError, match="style"):
         load_config(path)
+
+
+def test_my_languages(tmp_path):
+    path = tmp_path / "config.toml"
+    assert load_config(path).translation.my_languages == ()  # default: ask Windows
+    path.write_text('[translation]\nmy_languages = ["de", "en"]\n', encoding="utf-8")
+    assert load_config(path).translation.my_languages == ("de", "en")
+    for bad in ('["german"]', '["de", 3]'):
+        path.write_text(f"[translation]\nmy_languages = {bad}\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match="my_languages"):
+            load_config(path)

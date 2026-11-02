@@ -54,6 +54,7 @@ _CreateWindowExW = _api(_user32, "CreateWindowExW", wintypes.HWND, wintypes.DWOR
                         ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU,
                         wintypes.HINSTANCE, wintypes.LPVOID)
 _DestroyWindow = _api(_user32, "DestroyWindow", wintypes.BOOL, wintypes.HWND)
+_GetClipboardSequenceNumber = _api(_user32, "GetClipboardSequenceNumber", wintypes.DWORD)
 _GlobalAlloc = _api(_kernel32, "GlobalAlloc", wintypes.HGLOBAL, wintypes.UINT, ctypes.c_size_t)
 _GlobalLock = _api(_kernel32, "GlobalLock", wintypes.LPVOID, wintypes.HGLOBAL)
 _GlobalUnlock = _api(_kernel32, "GlobalUnlock", wintypes.BOOL, wintypes.HGLOBAL)
@@ -183,6 +184,64 @@ def to_clipboard_text(text: str) -> str:
 def copy_text(text: str) -> None:
     """Leave text in the clipboard for the user to paste (also in Win+V history, not cloud)."""
     set_clipboard_text(to_clipboard_text(text))
+
+
+def _format_data(name: str) -> bytes | None:
+    """Raw data of a registered clipboard format (clipboard must be open), None if absent."""
+    handle = _GetClipboardData(_RegisterClipboardFormatW(name))
+    size = _GlobalSize(handle) if handle else 0
+    ptr = _GlobalLock(handle) if size else None
+    if not ptr:
+        return None
+    try:
+        return ctypes.string_at(ptr, size)
+    finally:
+        _GlobalUnlock(handle)
+
+
+def capture_selection(timeout: float = 0.6) -> str | None:
+    """The text selected in the focused app, or None if nothing is selected.
+
+    Saves the clipboard, sends Ctrl+Insert (copy, like Ctrl+C; but in a terminal without a
+    selection Ctrl+C would interrupt the running program), reads the text and puts the old
+    clipboard back. An app that copies nothing leaves the clipboard unchanged: no selection.
+    VS Code copies the whole line when nothing is selected; it marks that, so it counts as no
+    selection too (translating it would paste a translated copy of the line).
+    """
+    try:
+        saved: Saved | None = save_clipboard()
+    except ClipboardError:
+        log.warning("could not read the clipboard; it won't be restored", exc_info=True)
+        saved = None
+    sequence = _GetClipboardSequenceNumber()
+    wait_for_modifiers_released()
+    kb = Controller()
+    with kb.pressed(Key.ctrl):
+        kb.tap(Key.insert)
+    deadline = time.monotonic() + timeout
+    while _GetClipboardSequenceNumber() == sequence:
+        if time.monotonic() > deadline:
+            return None  # nothing copied, the clipboard is untouched
+        time.sleep(0.01)
+    time.sleep(0.05)  # apps may add more formats right after the first one
+    with _opened():
+        handle = _GetClipboardData(CF_UNICODETEXT)
+        ptr = _GlobalLock(handle) if handle else None
+        text = None
+        if ptr:
+            try:
+                text = ctypes.wstring_at(ptr)
+            finally:
+                _GlobalUnlock(handle)
+        vscode = _format_data("vscode-editor-data") or b""
+    if saved is not None:
+        try:
+            restore_clipboard(saved)
+        except ClipboardError:
+            log.warning("could not restore the previous clipboard", exc_info=True)
+    if b'"isFromEmptySelection":true' in vscode.replace(b" ", b""):
+        return None
+    return text.replace("\r\n", "\n") if text else None
 
 
 def paste_text(text: str, restore_delay: float = 0.3) -> None:

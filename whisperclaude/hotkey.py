@@ -1,6 +1,9 @@
-"""Global hotkey: a short tap of Left Ctrl (alone) puts a TOGGLE event into a queue."""
+"""Global hotkeys: a short tap of Left Ctrl (alone) puts a TOGGLE event into a queue, a tap
+of the translate key (Left Alt) a TRANSLATE event."""
 from __future__ import annotations
 
+import ctypes
+import logging
 import queue
 import time
 from typing import Callable
@@ -8,10 +11,19 @@ from typing import Callable
 from pynput import mouse
 from pynput.keyboard import Key, KeyCode, Listener
 
-from whisperclaude.app import CANCEL, TOGGLE
+from whisperclaude.app import CANCEL, TOGGLE, TRANSLATE
+
+log = logging.getLogger(__name__)
 
 DEFAULT_KEY = Key.ctrl_l
 MAX_HOLD_S = 0.5
+
+WM_KEYDOWN, WM_SYSKEYDOWN = 0x100, 0x104
+LLKHF_EXTENDED = 0x01
+KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP = 0x1, 0x2
+MASK_VK = 0xE8  # unassigned virtual key (AutoHotkey's "menu mask key" does the same)
+MASKED_VKS = {0x12, 0xA4, 0xA5, 0x5B, 0x5C}  # Alt, Left/Right Alt, Left/Right Win
+OWN_EVENT = 0x57434C44  # dwExtraInfo of the key events we send ourselves ("WCLD")
 
 
 class TapDetector:
@@ -71,21 +83,86 @@ def key_label(name: str) -> str:
     return labels.get(name, name.replace("_", " ").title())
 
 
+def key_vk(key: Key | KeyCode) -> int:
+    """Windows virtual-key code of a pynput key (0 if it has none, e.g. a plain character)."""
+    code = key.value if isinstance(key, Key) else key
+    return code.vk or 0
+
+
+def _send_masked_release(vk: int, scan: int, flags: int) -> None:
+    """Replay a swallowed key-up with a dummy key in front of it.
+
+    A tap of Alt alone opens the focused app's menu bar (Office: key tips; VS Code, Explorer,
+    Notepad: the menu), a tap of Win the Start menu. Windows does that on the key-up, and only
+    if no other key came in between. So the hook swallows the real key-up and sends "dummy key
+    down, dummy key up, key up" instead: the app sees a combination and does nothing.
+    """
+    extended = KEYEVENTF_EXTENDEDKEY if flags & LLKHF_EXTENDED else 0
+    user32 = ctypes.windll.user32
+    user32.keybd_event(MASK_VK, 0, 0, OWN_EVENT)
+    user32.keybd_event(MASK_VK, 0, KEYEVENTF_KEYUP, OWN_EVENT)
+    user32.keybd_event(vk, scan, KEYEVENTF_KEYUP | extended, OWN_EVENT)
+
+
+class TranslateKeyFilter:
+    """pynput's win32_event_filter: detects a tap of the translate key inside the hook.
+
+    on_tap() is called on a tap. For Alt and Win the tap's key-up is swallowed (suppress()
+    raises, which makes Windows drop the event) and replayed with a dummy key in front, see
+    _send_masked_release. That replay is ignored here (marked with OWN_EVENT).
+    """
+
+    def __init__(self, vk: int, max_hold: float, on_tap: Callable[[], None],
+                 suppress: Callable[[], None], clock: Callable[[], float] = time.monotonic,
+                 send: Callable[[int, int, int], None] = _send_masked_release) -> None:
+        self.tap = TapDetector(vk, max_hold, clock)  # on virtual-key codes
+        self.vk, self.on_tap, self.suppress, self.send = vk, on_tap, suppress, send
+
+    def interrupt(self) -> None:
+        self.tap.interrupt()
+
+    def __call__(self, msg: int, data) -> bool:
+        if not self.vk or (data.dwExtraInfo or 0) == OWN_EVENT:
+            return True
+        try:
+            if msg in (WM_KEYDOWN, WM_SYSKEYDOWN):
+                self.tap.press(data.vkCode)
+                return True
+            if not self.tap.release(data.vkCode):
+                return True
+            self.on_tap()
+            if data.vkCode not in MASKED_VKS:
+                return True
+            self.send(data.vkCode, data.scanCode, data.flags)
+        except Exception:  # any other exception would stop pynput's listener
+            log.exception("translate key filter failed")
+            return True
+        self.suppress()  # raises: Windows drops the original key-up
+        return False
+
+
 class HotkeyListener:
-    """Keyboard + mouse listeners (pynput threads) feeding one TapDetector.
+    """Keyboard + mouse listeners (pynput threads) feeding the TapDetectors.
 
     The callbacks run inside Windows low-level hooks, which Windows silently removes if a
     callback is slow, so they only do trivial work (events.put never waits for the consumer).
+    The translate key is detected in pynput's event filter, which runs inside the hook itself
+    (the other callbacks run later, on pynput's thread): only there can its key-up be swallowed.
     """
 
     def __init__(self, events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,
-                 max_hold: float = MAX_HOLD_S, cancel_key: Key | KeyCode | None = None) -> None:
+                 max_hold: float = MAX_HOLD_S, cancel_key: Key | KeyCode | None = None,
+                 translate_key: Key | KeyCode | None = None) -> None:
         self._events, self._key, self._max_hold = events, key, max_hold
         self._cancel_key = cancel_key
+        self._translate_vk = key_vk(translate_key) if translate_key is not None else 0
         self._start()
 
     def _start(self) -> None:
         tap = TapDetector(self._key, self._max_hold)
+        translate = TranslateKeyFilter(self._translate_vk, self._max_hold,
+                                       lambda: self._events.put((TRANSLATE, None)),
+                                       lambda: self._keyboard.suppress_event())
 
         def on_press(k: Key | KeyCode | None) -> None:
             tap.press(k)
@@ -96,10 +173,15 @@ class HotkeyListener:
             if tap.release(k):
                 self._events.put((TOGGLE, None))
 
-        self._keyboard = Listener(on_press=on_press, on_release=on_release)
+        def interrupt() -> None:
+            tap.interrupt()
+            translate.interrupt()
+
+        self._keyboard = Listener(on_press=on_press, on_release=on_release,
+                                  win32_event_filter=translate)
         self._mouse = mouse.Listener(
-            on_click=lambda x, y, button, pressed: tap.interrupt(),
-            on_scroll=lambda x, y, dx, dy: tap.interrupt(),
+            on_click=lambda x, y, button, pressed: interrupt(),
+            on_scroll=lambda x, y, dx, dy: interrupt(),
         )
         for listener in (self._keyboard, self._mouse):
             listener.daemon = True
@@ -137,6 +219,7 @@ class GapDetector:
 
 def start_hotkey_listener(events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,
                           max_hold: float = MAX_HOLD_S,
-                          cancel_key: Key | KeyCode | None = None) -> HotkeyListener:
+                          cancel_key: Key | KeyCode | None = None,
+                          translate_key: Key | KeyCode | None = None) -> HotkeyListener:
     """Start listening. Call .stop() on the result to end it."""
-    return HotkeyListener(events, key, max_hold, cancel_key)
+    return HotkeyListener(events, key, max_hold, cancel_key, translate_key)

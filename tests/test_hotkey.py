@@ -1,7 +1,8 @@
 import pytest
 from pynput.keyboard import Key, KeyCode
 
-from whisperclaude.hotkey import TapDetector, parse_key
+from whisperclaude.hotkey import (OWN_EVENT, WM_KEYDOWN, WM_SYSKEYDOWN, TapDetector,
+                                   TranslateKeyFilter, key_vk, parse_key)
 
 
 @pytest.fixture
@@ -49,3 +50,76 @@ def test_parse_key():
     assert parse_key("x") == KeyCode.from_char("x")
     with pytest.raises(ValueError):
         parse_key("ctrl_x")
+
+
+class KeyData:
+    def __init__(self, vk, flags=0, scan=0x38, extra=None):
+        self.vkCode, self.flags, self.scanCode, self.dwExtraInfo = vk, flags, scan, extra
+
+
+class Suppressed(Exception):
+    pass
+
+
+@pytest.fixture
+def alt_filter():
+    clock, taps, sent = [0.0], [], []
+
+    def suppress():
+        raise Suppressed  # like pynput's suppress_event()
+
+    f = TranslateKeyFilter(0xA4, 0.5, lambda: taps.append(1), suppress, clock=lambda: clock[0],
+                           send=lambda *a: sent.append(a))
+    return f, clock, taps, sent
+
+
+def test_alt_tap_is_swallowed_and_replayed(alt_filter):
+    f, clock, taps, sent = alt_filter
+    assert f(WM_SYSKEYDOWN, KeyData(0xA4)) is True  # the press goes through
+    clock[0] += 0.1
+    with pytest.raises(Suppressed):
+        f(0x101, KeyData(0xA4, flags=0x80))  # WM_KEYUP
+    assert taps == [1] and sent == [(0xA4, 0x38, 0x80)]
+
+
+def test_alt_combinations_pass_through(alt_filter):
+    f, clock, taps, sent = alt_filter
+    f(WM_SYSKEYDOWN, KeyData(0xA4))
+    f(WM_SYSKEYDOWN, KeyData(0x09))  # Alt+Tab
+    assert f(0x101, KeyData(0xA4)) is True
+    f(WM_SYSKEYDOWN, KeyData(0xA4))
+    f.interrupt()  # Alt+click
+    assert f(0x101, KeyData(0xA4)) is True
+    f(WM_SYSKEYDOWN, KeyData(0xA4))
+    clock[0] += 1.0  # held too long
+    assert f(0x101, KeyData(0xA4)) is True
+    assert taps == [] and sent == []
+
+
+def test_own_events_are_ignored(alt_filter):
+    f, clock, taps, sent = alt_filter
+    f(WM_SYSKEYDOWN, KeyData(0xA4))
+    f(WM_KEYDOWN, KeyData(0xE8, flags=0x10, extra=OWN_EVENT))  # our mask key: no interruption
+    with pytest.raises(Suppressed):
+        f(0x101, KeyData(0xA4))
+    assert f(0x101, KeyData(0xA4, flags=0x10, extra=OWN_EVENT)) is True  # our replay passes
+    assert taps == [1]
+
+
+def test_unmasked_key_tap_is_not_swallowed():
+    taps = []
+    f = TranslateKeyFilter(0x78, 0.5, lambda: taps.append(1), lambda: 1 / 0, clock=lambda: 0.0)
+    f(WM_KEYDOWN, KeyData(0x78))  # F9: nothing to mask
+    assert f(0x101, KeyData(0x78)) is True and taps == [1]
+
+
+def test_filter_errors_never_escape(alt_filter):
+    f, clock, taps, sent = alt_filter
+    f.send = lambda *a: 1 / 0
+    f(WM_SYSKEYDOWN, KeyData(0xA4))
+    assert f(0x101, KeyData(0xA4)) is True  # an exception would stop pynput's listener
+
+
+def test_key_vk():
+    assert key_vk(Key.alt_l) == 0xA4
+    assert key_vk(Key.ctrl_l) == 0xA2

@@ -6,8 +6,9 @@ UI, tray, hotkey and event loop come up first; the model loads on a background t
 back through the event queue. Taps and tray clicks work (and say "still loading") from the
 first second.
 
-Main thread: Tk (overlay) sleeps until the event queue wakes it. pynput threads: hotkey.
-Worker: transcription + paste. pystray: tray icon in its own thread. Model loader: short-lived.
+Main thread: Tk (overlay, language picker) sleeps until the event queue wakes it. pynput
+threads: hotkeys. Worker: transcription, translation + paste. pystray: tray icon in its own
+thread. Model loader: short-lived, loads Whisper and then the translation model.
 """
 import ctypes
 import functools
@@ -27,16 +28,19 @@ import psutil
 from whisperclaude.app import QUIT, RESTART, App, State, WakeQueue
 from whisperclaude.commands import apply_commands
 from whisperclaude.config import (CONFIG_PATH, Config, ConfigError, ModelConfig,
-                                  load_config)
+                                  TranslationConfig, load_config)
 from whisperclaude import lifecycle
 from whisperclaude.hotkey import GapDetector, key_label, parse_key, start_hotkey_listener
 from whisperclaude.history import History
 from whisperclaude.inserter import ClipboardError, copy_text, paste_text
+from whisperclaude.languages import LANGUAGES
 from whisperclaude.overlay import Overlay, enable_dpi_awareness
+from whisperclaude.picker import LanguagePicker
 from whisperclaude.recorder import Recorder
+from whisperclaude.translation import RecentLanguages, Translation
 from whisperclaude.tray import Tray
-# whisperclaude.transcriber is imported by the loader thread: it pulls in the heavy Whisper
-# stack (ctranslate2, onnxruntime, OpenVINO), which must not delay the UI.
+# whisperclaude.transcriber and .translator are imported by the loader thread: they pull in
+# the heavy Whisper stack (ctranslate2, onnxruntime, OpenVINO), which must not delay the UI.
 
 log = logging.getLogger("whisperclaude")
 BACKUP_POLL_MS = 1000  # safety net + resume detection; normally the queue wakes Tk itself
@@ -107,8 +111,10 @@ def spawn_new_instance() -> None:
                       RESTARTED_FLAG], cwd=CONFIG_PATH.parent, creationflags=flags, close_fds=True)
 
 
-def start_model_loading(events: WakeQueue, m: ModelConfig) -> None:
-    """Load the model on a thread; the outcome arrives as LOADED / LOAD_FAILED events.
+def start_model_loading(events: WakeQueue, m: ModelConfig, t: TranslationConfig,
+                        translation: Translation | None) -> None:
+    """Load the model on a thread; the outcome arrives as LOADED / LOAD_FAILED events. Then
+    the translation model, handed to `translation` directly (a dictation can already run).
 
     The prompt has no "Command new line. Command bullet. ..." examples any more: on short,
     unclear pieces of speech Whisper copied them ("Command. Command. Command." instead of what
@@ -133,6 +139,22 @@ def start_model_loading(events: WakeQueue, m: ModelConfig) -> None:
         except Exception as e:
             log.exception("could not load a model")
             events.put((LOAD_FAILED, str(e)))
+            return
+        if translation is None:
+            return
+        try:
+            from whisperclaude.translator import Translator
+
+            t0 = time.perf_counter()
+            translator = Translator(t.model, t.device, t.cpu_threads, languages=t.my_languages)
+            log.info("translation model %s loaded on %s in %.1f s; own languages %s (%s)",
+                     translator.model_name, translator.device, time.perf_counter() - t0,
+                     ", ".join(translator.detector.preferred),
+                     "config" if t.my_languages else "Windows")
+            translation.set_translator(translator)
+        except Exception as e:
+            log.exception("could not load the translation model")
+            translation.set_failed(f"could not load the translation model: {e}")
 
     threading.Thread(target=run, daemon=True, name="model-loader").start()
 
@@ -218,14 +240,19 @@ def main() -> None:
                 copy_to_clipboard, style=cfg.tray.style, level_fn=lambda: recorder.level)
     tray.start()
 
-    def remember(text: str) -> None:  # worker thread, before the paste
-        history.add(text)
+    def remember(text: str, translation: str = "", target: str = "") -> None:  # worker thread
+        history.add(text, translation, target)
         tray.refresh()
 
     def on_state(state: State, msg: str = "") -> None:
         overlay.set_state(state, msg)
         tray.set_state(state, msg)
 
+    translation = None
+    if cfg.translation.enabled:
+        translation = Translation(LanguagePicker(root, LANGUAGES),
+                                  RecentLanguages(data_dir / "translate.json"),
+                                  key_label(cfg.translation.key), cfg.translation.my_languages)
     paste = functools.partial(paste_text, restore_delay=cfg.paste.restore_delay_s)
     recorder = Recorder()
     overlay.level_fn = lambda: recorder.level
@@ -236,10 +263,12 @@ def main() -> None:
               stop_after_silence_s=cfg.recording.stop_after_silence_s, copy=copy_text,
               remember=remember,
               on_pasted=lambda text: (overlay.show_pasted(lambda: copy_to_clipboard(text)),
-                                      tray.flash_pasted()))
+                                      tray.flash_pasted()),
+              translation=translation)
     listener = start_hotkey_listener(
         events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s,
-        parse_key(cfg.hotkey.cancel_key) if cfg.hotkey.cancel_key else None)
+        parse_key(cfg.hotkey.cancel_key) if cfg.hotkey.cancel_key else None,
+        parse_key(cfg.translation.key) if translation else None)
     overlay.show_starting("Loading model…")
     log.info("UI, tray and hotkey up %.1f s after process start; loading the model",
              time.time() - psutil.Process().create_time())
@@ -320,7 +349,7 @@ def main() -> None:
     root.bind(WAKE_EVENT, lambda e: pump())
     events.wake = lambda: root.event_generate(WAKE_EVENT, when="tail")
     root.after(BACKUP_POLL_MS, backup_poll)
-    start_model_loading(events, cfg.model)
+    start_model_loading(events, cfg.model, cfg.translation, translation)
     root.mainloop()
 
 

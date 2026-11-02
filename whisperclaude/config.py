@@ -8,11 +8,14 @@ from pathlib import Path
 
 from whisperclaude.hotkey import parse_key
 from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY, WHISPER_LANGUAGES
+from whisperclaude.languages import SOURCE_CODES
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 COMPUTE_TYPES = {"int8", "int8_float32", "int16", "float32"}
 TRAY_STYLES = ("classic", "pulse", "bars", "ring")  # = tray_icons.STYLES (not imported: PIL)
 DEVICES = {"auto", "gpu", "cuda", "igpu", "cpu"}
+TRANSLATION_DEVICES = {"auto", "cuda", "cpu"}
+TRANSLATION_MODELS = ("auto", "nllb-600m", "nllb-1.3b")  # translator.MODELS (heavy import)
 
 
 class ConfigError(ValueError):
@@ -117,6 +120,30 @@ class CommandsConfig:
 
 
 @dataclass(frozen=True)
+class TranslationConfig:
+    enabled: bool = True
+    key: str = "alt_l"        # tap alone: translate the selected text, or the dictation
+    model: str = "auto"  # NVIDIA GPU: nllb-1.3b, CPU: nllb-600m (docs/translation.md)
+    device: str = "auto"      # "auto" = NVIDIA GPU if available, else CPU | "cuda" | "cpu"
+    cpu_threads: int = 4
+    my_languages: tuple[str, ...] = ()  # languages the user writes in; () = ask Windows
+
+    def __post_init__(self) -> None:
+        try:
+            parse_key(self.key)
+        except ValueError as e:
+            raise ConfigError(f"[translation] key: {e}") from None
+        unknown = [c for c in self.my_languages if not isinstance(c, str) or c not in SOURCE_CODES]
+        _check(not unknown, f"[translation] my_languages: unknown language code(s) {unknown}, "
+                            'use codes like "de", "en", "es"')
+        _check(self.model in TRANSLATION_MODELS,
+               f"[translation] model must be one of {list(TRANSLATION_MODELS)}")
+        _check(self.device in TRANSLATION_DEVICES,
+               f"[translation] device must be one of {sorted(TRANSLATION_DEVICES)}")
+        _check(1 <= self.cpu_threads <= 32, "[translation] cpu_threads must be 1–32")
+
+
+@dataclass(frozen=True)
 class Config:
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
@@ -125,11 +152,17 @@ class Config:
     tray: TrayConfig = field(default_factory=TrayConfig)
     paste: PasteConfig = field(default_factory=PasteConfig)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
+    translation: TranslationConfig = field(default_factory=TranslationConfig)
+
+    def __post_init__(self) -> None:
+        if self.translation.enabled:
+            _check(self.translation.key not in (self.hotkey.key, self.hotkey.cancel_key),
+                   "[translation] key must differ from [hotkey] key and cancel_key")
 
 
 SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "recording": RecordingConfig,
             "history": HistoryConfig, "tray": TrayConfig, "paste": PasteConfig,
-            "commands": CommandsConfig}
+            "commands": CommandsConfig, "translation": TranslationConfig}
 
 
 def _build(cls: type, raw: object, section: str):

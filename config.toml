@@ -48,6 +48,23 @@ keep = 5
 # original static icon). Animations only run while recording/transcribing.
 style = "bars"
 
+[translation]
+# Tap the key alone: translates selected text (it is replaced by the translation), or, while
+# dictating, stops the recording and pastes the dictation translated. A list opens to pick
+# the language: type to search, Enter (or the key again) translates, Esc cancels. Tab picks
+# the text's own language instead of "Auto" (detection), which helps with very short texts.
+# Tapping Left Alt alone then no longer opens the menu bar / key tips of the focused app.
+enabled = true
+key = "alt_l"         # "alt_l", "alt_r", "f8", ... (must differ from [hotkey] key)
+model = "auto"        # NLLB-200: "nllb-600m" (0.6 GB, faster) or "nllb-1.3b" (1.4 GB, better);
+                      # "auto" = nllb-1.3b on an NVIDIA GPU, nllb-600m on the CPU
+device = "auto"       # "auto" = NVIDIA GPU if available, else CPU | "cuda" | "cpu"
+cpu_threads = 4
+# The languages you write in, most used first (ISO codes: "de", "en", "es", "fr", "pl", ...).
+# They help to recognize the language of short texts ("Danke", "Bis morgen"). Include English
+# if you write it too. [] = take them from Windows (display language, keyboard layouts, English).
+my_languages = []
+
 [paste]
 restore_delay_s = 0.3 # wait before restoring your old clipboard (raise if an app pastes the old text)
 

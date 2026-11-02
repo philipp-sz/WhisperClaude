@@ -4,12 +4,17 @@ from pathlib import Path
 from whisperclaude.history import History
 from whisperclaude.tray import Tray
 
+# pystray names its window class after id(icon) and unregisters it only for a started icon:
+# a later Tray at a freed icon's address fails with "class already exists". Keep them alive.
+_ALIVE = []
+
 
 def make_tray(tmp_path, keep=5):
     copied = []
     history = History(tmp_path, keep)
     tray = Tray(lambda: None, lambda: None, Path("log.txt"), Path("config.toml"),
                 history=history, on_copy=copied.append)
+    _ALIVE.append(tray)
     return tray, history, copied
 
 
@@ -117,6 +122,20 @@ def test_quit_asks_first(tmp_path):
         quit_calls = []
         tray = Tray(lambda: quit_calls.append(1), lambda: None, Path("log"), Path("cfg"),
                     confirm=lambda answer=answer: answer)
+        _ALIVE.append(tray)
         quit_item = next(i for i in tray.icon.menu.items if str(i.text) == "Quit WhisperClaude")
         quit_item(tray.icon)
         assert len(quit_calls) == quits
+
+
+def test_translated_dictation_offers_both_texts(tmp_path):
+    tray, history, copied = make_tray(tmp_path)
+    history.add("Hallo Welt", "Bonjour le monde", "fra_Latn")
+    entry = tray._recent_items()[1]
+    assert str(entry.text).startswith("Hallo Welt\t→ French")
+    original, translation = entry.submenu.items
+    assert str(original.text) == "Original\tHallo Welt"
+    assert str(translation.text) == "French\tBonjour le monde"
+    translation(tray.icon)
+    original(tray.icon)
+    assert copied == ["Bonjour le monde", "Hallo Welt"]

@@ -48,3 +48,22 @@ def test_menu_preview_and_time():
     assert long.when().endswith("· 12k")  # 12,800 characters: easy to spot in the menu
     old = Entry(now - 3 * 86400, "Alt")
     assert old.when() == time.strftime("%d.%m. %H:%M", time.localtime(old.time))
+
+
+def test_a_translation_joins_its_dictation_and_survives_a_restart(tmp_path):
+    h = History(tmp_path)
+    h.add("erstes")
+    h.add("hallo welt")  # saved before the translation
+    h.add("hallo welt", "bonjour le monde", "fra_Latn")
+    first, second = h.entries()
+    assert (first.text, first.translation, first.target) == ("hallo welt", "bonjour le monde", "fra_Latn")
+    assert second.text == "erstes" and second.translation == ""
+    h.add("Auswahl", "Selection", "eng_Latn")  # a translated selection: a new entry
+    assert [e.text for e in h.entries()] == ["Auswahl", "hallo welt", "erstes"]
+    again = History(tmp_path)
+    assert again.entries() == h.entries()
+
+
+def test_reads_a_history_file_from_before_translations(tmp_path):
+    (tmp_path / "history.json").write_text('[{"time": 1.0, "text": "alt"}]', encoding="utf-8")
+    assert History(tmp_path).entries() == [Entry(1.0, "alt")]

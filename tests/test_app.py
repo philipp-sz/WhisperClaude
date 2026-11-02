@@ -3,6 +3,7 @@ import threading
 import time
 
 import numpy as np
+import pytest
 
 from whisperclaude import app as app_module
 from whisperclaude.app import QUIT, RESTART, SAMPLE_RATE, TOGGLE, App, State, WakeQueue
@@ -427,3 +428,188 @@ def test_failing_history_does_not_stop_the_paste():
     app.handle(TOGGLE)
     finish(app)
     assert pasted == ["text"]
+
+
+# ---------- translate key ----------
+
+class FakeTranslation:
+    """Picker answers are given by the test through .answer(); translate() tags the text."""
+
+    def __init__(self, selection="Hallo Welt", fail=False):
+        self.selection, self.fail = selection, fail
+        self.picks, self.confirmed, self.closed, self.translated = [], 0, 0, []
+        self.guesses, self.sources = [], []
+
+    def capture_selection(self):
+        return self.selection
+
+    def guess(self, text):
+        return ["deu_Latn"]
+
+    def pick(self, on_done, dictation=False, guess=()):
+        self.picks.append((on_done, dictation, list(guess)))
+
+    def set_guess(self, codes):
+        self.guesses.append(codes)
+
+    def answer(self, choice, focus_back=True, source=None):
+        """choice: target code (with `source`), or None = Esc / clicked elsewhere."""
+        self.picks[-1][0](None if choice is None else (choice, source), focus_back)
+
+    def confirm_pick(self):
+        self.confirmed += 1
+
+    def close_pick(self):
+        self.closed += 1
+
+    def translate(self, text, target, source=None):
+        if self.fail:
+            raise RuntimeError("model broken")
+        self.translated.append((text, target))
+        self.sources.append(source)
+        return f"[{target}] {text}"
+
+
+def make_translate_app(translation, text="hallo welt"):
+    states, pasted, copied, saved = [], [], [], []
+    tr = BlockingTranscriber(text)
+    tr.release.set()
+    app = App(FakeRecorder(), tr, pasted.append,
+              on_state=lambda s, msg="": states.append((s, msg)), copy=copied.append,
+              remember=lambda *texts: saved.append(texts if len(texts) > 1 else texts[0]),
+              translation=translation)
+    return app, states, pasted, copied, saved
+
+
+def pump_until(app, condition, timeout=5.0):
+    """Handle worker events (like the Tk loop) until condition() is true."""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        try:
+            kind, payload = app.events.get(timeout=0.05)
+        except Exception:
+            continue
+        app.handle(kind, payload)
+
+
+def test_translate_selection():
+    t = FakeTranslation()
+    app, states, pasted, copied, saved = make_translate_app(t)
+    app.handle(app_module.TRANSLATE)
+    assert app.state is State.TRANSLATING
+    pump_until(app, lambda: t.picks)
+    assert t.picks[0][1] is False  # not a dictation
+    app.handle(app_module.TRANSLATE)  # tapped again in the picker: take the top language
+    assert t.confirmed == 1
+    t.answer("deu_Latn")
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert pasted == ["[deu_Latn] Hallo Welt"]
+    assert saved == [("Hallo Welt", "[deu_Latn] Hallo Welt", "deu_Latn")]  # both, one entry
+    assert (State.TRANSLATING, "") in states
+
+
+def test_translate_without_selection_says_so():
+    t = FakeTranslation(selection=None)
+    app, states, pasted, *_ = make_translate_app(t)
+    app.handle(app_module.TRANSLATE)
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert not t.picks and not pasted
+    assert "Select text" in states[-1][1]
+
+
+def test_translate_selection_cancelled_leaves_it_alone():
+    t = FakeTranslation()
+    app, states, pasted, copied, saved = make_translate_app(t)
+    app.handle(app_module.TRANSLATE)
+    pump_until(app, lambda: t.picks)
+    t.answer(None)
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert not pasted and not copied and not saved and not t.translated
+
+
+def test_dictate_and_translate():
+    t = FakeTranslation()
+    app, states, pasted, copied, saved = make_translate_app(t)
+    app.handle(TOGGLE)
+    app.handle(app_module.TRANSLATE)  # instead of the second Ctrl tap
+    assert app.state is State.TRANSCRIBING
+    assert t.picks and t.picks[0][1] is True  # the picker opens right away
+    t.answer("fra_Latn")
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert t.translated == [("hallo welt", "fra_Latn")]
+    assert pasted == ["[fra_Latn] hallo welt"]
+    # the original first (kept whatever happens), then the pair: history merges them
+    assert saved == ["hallo welt", ("hallo welt", "[fra_Latn] hallo welt", "fra_Latn")]
+
+
+@pytest.mark.parametrize("focus_back, pasted_expected, copied_expected", [
+    (True, ["hallo welt"], []),   # Esc: paste the dictation untranslated
+    (False, [], ["hallo welt"]),  # clicked elsewhere: clipboard only
+])
+def test_dictation_picker_cancelled(focus_back, pasted_expected, copied_expected):
+    t = FakeTranslation()
+    app, states, pasted, copied, saved = make_translate_app(t)
+    app.handle(TOGGLE)
+    app.handle(app_module.TRANSLATE)
+    t.answer(None, focus_back)
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert pasted == pasted_expected and copied == copied_expected
+    assert saved == ["hallo welt"] and not t.translated
+
+
+def test_failed_translation_keeps_the_dictation():
+    t = FakeTranslation(fail=True)
+    app, states, pasted, copied, saved = make_translate_app(t)
+    app.handle(TOGGLE)
+    app.handle(app_module.TRANSLATE)
+    t.answer("fra_Latn")
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert not pasted and copied == ["hallo welt"] and saved == ["hallo welt"]
+    assert "translation failed" in states[-1][1]
+
+
+def test_nothing_recognized_closes_the_picker():
+    t = FakeTranslation()
+    app, states, pasted, *_ = make_translate_app(t, text="")
+    app.handle(TOGGLE)
+    app.handle(app_module.TRANSLATE)
+    pump_until(app, lambda: t.closed == 1)
+    t.answer(None)  # what close_pick() does in the real picker
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert not pasted and states[-1] == (State.IDLE, "Nothing recognized")
+
+
+def test_translate_key_without_feature_or_while_loading():
+    app, states, pasted = make_app()
+    app.handle(app_module.TRANSLATE)  # feature off: nothing happens
+    assert app.state is State.IDLE and not states
+    t = FakeTranslation()
+    loading = App(FakeRecorder(), None, lambda text: None, translation=t,
+                  on_state=lambda s, msg="": states.append((s, msg)))
+    loading.handle(app_module.TRANSLATE)
+    assert loading.state is State.LOADING and "loading" in states[-1][1]
+
+
+def test_selection_picker_shows_the_guess_and_the_picked_source_is_used():
+    t = FakeTranslation()
+    app, states, pasted, *_ = make_translate_app(t)
+    app.handle(app_module.TRANSLATE)
+    pump_until(app, lambda: t.picks)
+    assert t.picks[0][2] == ["deu_Latn"]  # "Auto · German" in the picker
+    t.answer("fra_Latn", source="nld_Latn")  # the user overrode the source
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert t.sources == ["nld_Latn"] and pasted == ["[fra_Latn] Hallo Welt"]
+
+
+def test_dictation_guess_reaches_the_open_picker():
+    t = FakeTranslation()
+    app, states, pasted, *_ = make_translate_app(t)
+    app.handle(TOGGLE)
+    app.handle(app_module.TRANSLATE)
+    assert t.picks[0][2] == []  # opened before the transcript exists
+    pump_until(app, lambda: t.guesses)
+    assert t.guesses == [["deu_Latn"]]
+    t.answer("fra_Latn")
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert t.sources == [None] and pasted == ["[fra_Latn] hallo welt"]
