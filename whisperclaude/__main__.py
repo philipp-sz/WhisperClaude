@@ -202,7 +202,7 @@ def main() -> None:
         cfg = load_config()
     except ConfigError as e:
         log.error("config error, using defaults: %s", e)
-        cfg, config_error = Config(), "Config error – using defaults (see log)"
+        cfg, config_error = Config(), "Config error, using defaults (see log)"
 
     enable_dpi_awareness()
     root = tk.Tk()
@@ -229,10 +229,10 @@ def main() -> None:
         try:
             copy_text(text)
             log.info("copied a dictation from the history (%d characters)", len(text))
-            events.put((COPIED, "Copied – paste with Ctrl+V"))
+            events.put((COPIED, "Copied: paste with Ctrl+V"))
         except ClipboardError:
             log.warning("copy failed", exc_info=True)
-            events.put((COPIED, "Copy failed – clipboard busy, try again"))
+            events.put((COPIED, "Copy failed: clipboard busy, try again"))
 
     history = History(data_dir, cfg.history.keep)
     hotkey = key_label(cfg.hotkey.key)
@@ -285,12 +285,12 @@ def main() -> None:
         if config_error:
             overlay.show_message(config_error, seconds=6)
         else:
-            overlay.show_ready(f"Ready – tap {hotkey}")
+            overlay.show_ready(f"Ready: tap {hotkey}")
         log.info("ready (%s on %s, hotkey %s)", type(transcriber).__name__, transcriber.device,
                  cfg.hotkey.key)
 
     def on_load_failed(message) -> None:
-        overlay.show_message("Could not load model – see log", seconds=None)
+        overlay.show_message("Could not load the model (see log)", seconds=None)
         root.after(5000, lambda: events.put((QUIT, None)))  # not a user Quit: may be revived
 
     app.handlers = {

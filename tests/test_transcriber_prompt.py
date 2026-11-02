@@ -45,10 +45,10 @@ def test_level_meter_keeps_silence_flat():
 
 
 @pytest.mark.parametrize("text, kind", [
-    ("Error: no microphone", "error"), ("Could not load model – see log", "error"),
-    ("Copy failed – clipboard busy, try again", "error"),
-    ("Config error – using defaults (see log)", "error"),
-    ("Copied – paste with Ctrl+V", "ok"),
+    ("Error: no microphone", "error"), ("Could not load the model (see log)", "error"),
+    ("Copy failed: clipboard busy, try again", "error"),
+    ("Config error, using defaults (see log)", "error"),
+    ("Copied: paste with Ctrl+V", "ok"),
     ("Cancelled", "stopped"), ("Too short", "info"), ("Nothing recognized", "info"),
     ("Not pasted (the focus moved)", "info"), ("Translation failed: model broken", "error"),
 ])

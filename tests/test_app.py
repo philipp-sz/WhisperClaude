@@ -192,7 +192,7 @@ def test_toggle_while_loading_says_so_and_does_not_record():
     app.handle(TOGGLE)
     assert app.state is State.LOADING
     assert app.recorder.started == 0
-    assert states == [(State.LOADING, "Still loading – one moment…")]
+    assert states == [(State.LOADING, "Still loading, one moment…")]
 
 
 def test_set_transcriber_ends_loading():

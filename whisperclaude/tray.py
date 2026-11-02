@@ -212,7 +212,7 @@ class Tray:
         animated = style != "classic"
         first = render(style, "loading") if animated else self._images[State.LOADING]
         self.icon = pystray.Icon("WhisperClaude", first,
-                                 f"WhisperClaude – {self._labels[State.LOADING]}", menu)
+                                 f"WhisperClaude: {self._labels[State.LOADING]}", menu)
         self._animator = _Animator(self.icon, style, level_fn) if animated else None
         self._guard_menu()
 
@@ -312,7 +312,7 @@ class Tray:
             self._animator.set(busy.value)
         else:
             self.icon.icon = self._images[state]
-        self.icon.title = f"WhisperClaude – {self._status()}"
+        self.icon.title = f"WhisperClaude: {self._status()}"
         self.refresh()
 
     def flash_pasted(self) -> None:

@@ -247,7 +247,7 @@ class App:
                 self._stop_recording()
             elif self.state is State.LOADING:
                 log.info("toggle ignored: model still loading")
-                self.on_state(State.LOADING, "Still loading – one moment…")
+                self.on_state(State.LOADING, "Still loading, one moment…")
             else:
                 log.info("toggle ignored while transcribing")
         elif kind == TRANSLATE:
@@ -300,7 +300,7 @@ class App:
         elif self.state is State.RECORDING:
             self._stop_recording(translate=True)
         elif self.state is State.LOADING:
-            self.on_state(State.LOADING, "Still loading – one moment…")
+            self.on_state(State.LOADING, "Still loading, one moment…")
         else:
             log.info("translate key ignored while busy")
 
