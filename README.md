@@ -55,7 +55,7 @@ The other settings work with their defaults: hotkeys, device, models, a fixed di
 3. Esc during recording stops it without pasting. The text is kept in "Recent dictations" and marked as cancelled. The pill offers to copy it. After 60 s without speech the recording stops by itself and is kept the same way.
 4. After each paste the pill shows a Copy button for 5 s. The tray menu entry "Recent dictations" keeps the last 5 dictations.
 
-The app writes the clipboard only to paste. It restores the previous content afterwards.
+The app writes the clipboard only to paste and when Copy is clicked. It restores the previous content after pasting and after reading a selection, also if that fails.
 
 ### Translating
 
@@ -97,13 +97,9 @@ A bullet item ends at the end of its sentence. Sentences that only contain "new 
 - Status pill with three styles (`[pill] style`): color waves, gradient bars or plain bars. Quiet microphones get more gain, so the waves stay visible.
 - Local history of the last 5 dictations in `%LOCALAPPDATA%\WhisperClaude\history.json`, readable only by the Windows user. `[history] keep = 0` turns it off and deletes the file.
 - Works offline after the first model download. Logs never contain transcript text.
-- 0% GPU while idle. CPU: 0.07% of one core with the CPU backend, 6–9% with the Intel iGPU backend (a thread in Intel's OpenCL runtime, see [docs](docs/transcription.md#idle-cpu-with-the-igpu-backend)).
+- 0% GPU while idle.
 
-## How it works
-
-Voice activity detection splits the recording at pauses into chunks of up to 30 s. Finished chunks are transcribed while recording continues. The Whisper backend depends on the hardware: `large-v3` or `large-v3-turbo` on an NVIDIA GPU (by free memory), `large-v3-turbo` on an Intel GPU, `small` on the CPU.
-
-The technical overview and measurements are in [docs/how-it-works.md](docs/how-it-works.md). The experiments behind each choice are in [docs/](docs/README.md).
+The technical overview is in [docs/how-it-works.md](docs/how-it-works.md). The experiments and measurements behind each choice are in [docs/](docs/README.md).
 
 ## Development
 
@@ -113,13 +109,15 @@ The technical overview and measurements are in [docs/how-it-works.md](docs/how-i
 .venv\Scripts\python.exe -m pytest -m slow  # real models on CPU and (if present) iGPU / NVIDIA GPU
 ```
 
-The slow tests need two short recordings of the user's voice, made with `scripts/record_clip.py`. Recordings are git-ignored. Without them the slow tests are skipped.
+The slow transcription tests use two short recordings of the user's voice, made with `scripts/record_clip.py`. Recordings are git-ignored. Without them these tests are skipped.
 
 ## Limitations
 
 - Windows only.
 - No space is inserted before a dictation that follows existing text. The app cannot read the text field.
+- If another app holds the clipboard for more than a second, nothing is pasted. The dictation stays in "Recent dictations".
 - The first 0.2–0.4 s after the start tap can be lost while the microphone opens.
+- With the Intel iGPU backend, the app uses 6–9% of one CPU core while idle, because a thread in Intel's OpenCL runtime keeps running. The CPU backend uses 0.07%. See [docs](docs/transcription.md#idle-cpu-with-the-igpu-backend).
 - NLLB adds words to inputs of one or two words ("Ja" becomes "Yes, I did.").
 - While the app runs, a tap of Left Alt alone no longer opens an app's menu bar. `[translation] key` sets another key.
 - The NLLB-200 weights are licensed CC-BY-NC 4.0, which allows non-commercial use only.
@@ -135,7 +133,7 @@ MIT, see [LICENSE.md](LICENSE.md). Dependencies are installed with pip and model
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper), CTranslate2, ONNX Runtime, sounddevice, Whisper models ([OpenAI](https://github.com/openai/whisper), [Systran](https://huggingface.co/Systran/faster-whisper-small) and [OpenVINO](https://huggingface.co/OpenVINO) conversions), Silero VAD | MIT |
 | OpenVINO (+ GenAI, Tokenizers), Hugging Face tokenizers / huggingface_hub | Apache-2.0 |
 | NumPy, PyAV, psutil, py3langid; Pillow | BSD; MIT-CMU |
-| [NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M) translation model (Meta), [CTranslate2 conversion](https://huggingface.co/JustFrederik/nllb-200-distilled-600M-ct2-int8) | CC-BY-NC-4.0 |
+| [NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-1.3B) translation models, distilled 1.3B and [600M](https://huggingface.co/facebook/nllb-200-distilled-600M) (Meta), CTranslate2 conversions ([1.3B](https://huggingface.co/OpenNMT/nllb-200-distilled-1.3B-ct2-int8), [600M](https://huggingface.co/JustFrederik/nllb-200-distilled-600M-ct2-int8)) | CC-BY-NC-4.0 |
 | CUDA libraries (`[cuda]` extra, cuBLAS, cuDNN) | NVIDIA license |
 | [pynput](https://github.com/moses-palmer/pynput), [pystray](https://github.com/moses-palmer/pystray) | LGPL-3.0 (unmodified, installed separately) |
 
