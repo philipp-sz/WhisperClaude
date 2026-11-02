@@ -127,11 +127,34 @@ Every 5 s while recording, the audio so far is passed to the VAD. A chunk is tra
 
 Five local models from 0.27B to 1.2B parameters (llama.cpp, CPU, 11 test cases) were tested for cleaning up the transcript. Models below 1B parameters answered questions in the text, translated mixed text or changed almost nothing. LFM2.5-1.2B fixed misheard words but also translated mixed text and added 1–4 s. Whisper with the prompt was kept without a cleanup step.
 
-## Open measurements on the laptop
+## Laptop measurements (2026-11-02)
 
-The desktop measurements above cover accuracy; these still need the laptop (Core Ultra 7 258V, Arc 140V iGPU) and the author's corpus (`bench_audio/corpus/`, git-ignored; `scripts/record_corpus.py` records it again if it is missing). After pulling: `.venv\Scripts\python.exe -m pip install -e .[dev]` (adds py3langid); the first start downloads NLLB-600M (0.6 GB).
+Core Ultra 7 258V, 32 GB RAM, Arc 140V iGPU, Windows 11, on the author's corpus (13 recordings with 506 words, plus 5 joined long dictations with 2,285 words and about 267 s of audio each). `scripts\eval_quality.py --models turbo-int8 v3-int8 turbo-int4 v3-int4 --beams 1 --prompts app` on AC power; the iGPU decodes greedily, so only beam 1 applies. Errors are substituted, deleted and inserted words against the reference text.
 
-1. `large-v3` on the iGPU: `scripts\eval_quality.py --models turbo-int8 v3-int8 --beams 1 --prompts app`. Compare WER (short clips and long dictations), time to text after the stop tap and GPU time per audio minute. The iGPU decodes greedily, so only beam 1 applies. If `large-v3` wins on WER at an acceptable time to text, `create_transcriber()` can pick it on the iGPU too (`GPU_MODEL` in `transcriber.py`).
-2. int4 on the iGPU: the same run with `--models turbo-int4 v3-int4`. On the CPU int4 cost accuracy; it only pays off if it is much faster on the iGPU.
-3. Translation on the laptop CPU: time to translate a few sentences with NLLB-600M (the default there) and with `[translation] model = "nllb-1.3b"` (2.3 times slower on the desktop CPU, 1–1.5 COMET points better).
-4. Quiet microphone: the dictation errors seen in real use may come from the low input level. Compare the corpus WER at the current Windows input level and at a higher one.
+| OpenVINO model | Errors, short clips | Errors, long dictations | Time per 10 s | Slowest short clip (23 s) | Time per long dictation | GPU s per audio min | RAM |
+|---|---|---|---|---|---|---|---|
+| `large-v3-turbo` int8 (chosen) | 19 (3.8%) | 84 (3.7%) | 0.30 s | 0.72 s | 12.0–12.4 s | 2.0 | 1.4 GB |
+| `large-v3` int8 | 17 (3.4%) | 98 (4.3%) | 1.33 s | 3.05 s | 34–38 s | 7.4 | 2.9 GB |
+| `large-v3-turbo` int4 | 24 (4.7%) | 104 (4.6%) | 0.39 s | 1.06 s | 12–13 s | 2.1 | 1.3 GB |
+| `large-v3` int4 | 17 (3.4%) | 104 (4.6%) | 1.36 s | 3.24 s | 18–23 s, once 505 s | 4.9 | 2.4 GB |
+
+- `large-v3` is not more accurate than the turbo on the author's voice: the 2-word gap on short clips is noise, and on the long dictations it made more errors (98 against 84). It is 4.4 times slower. With live transcription at most one 30 s chunk is left for after the stop tap, which would take about 3 s instead of 0.7 s. The iGPU keeps the turbo, as on the desktop; `[model] gpu_model = "large-v3"` switches it.
+- int4 saves nothing on the iGPU (turbo int4 is slower than int8) and makes more errors. One `large-v3` int4 run took 505 s for a 268 s clip and then 18 s for the same kind of clip, so it stalled once. int4 is not used.
+- Idle with the model loaded and no translation model: 1–2.5% of one core in this script, 0% GPU.
+
+Translation on the laptop CPU (CTranslate2 int8, beam 2, median of 5 warm runs; `[translation] model` and `cpu_threads`):
+
+| Model, threads | 1 short phrase | 3 sentences | 10 sentences | CPU time, 3 sentences | RAM | Load |
+|---|---|---|---|---|---|---|
+| NLLB-600M, 4 | 0.22 s | 0.39–0.45 s | 0.60 s | 1.5–1.7 s | +0.8 GB | 3.8 s |
+| NLLB-1.3B, 4 (default) | 0.34 s | 0.61–0.70 s | 1.54 s | 2.3–2.6 s | +1.55 GB | 5.6 s |
+| NLLB-600M, 8 | 0.23 s | 0.28–0.35 s | 0.68 s | 2.1–2.7 s | | |
+| NLLB-1.3B, 8 | 0.32 s | 0.48–0.64 s | 1.33 s | 3.5–4.5 s | | |
+
+The laptop CPU is 2–3 times faster than the desktop's Core i5-10600K for this (1.3B: 0.6 s for 3 sentences against 1.78 s). Eight threads gain at most 0.1 s and double the CPU time, so 4 stay. In a spot check of 6 short texts (German, English, French, Spanish) both models were correct and differed only in wording ("fertigstellen" against "beenden", "Te escribiré después" against "Después te escribiré brevemente"). The 1.3B is the default when memory allows because of its 1 COMET point on the desktop test (see [translation.md](translation.md)).
+
+The whole app (Whisper turbo on the iGPU plus NLLB in one process) uses 2.2 GB of RAM with the 600M model and 2.9 GB with the 1.3B. Cold start with an empty OpenVINO cache: UI, tray and hotkey after 1.6 s, Whisper ready after 12.6 s, the translation model 4 s later; during the model load the UI thread blocks for about 9 s (cold-disk DLL loading holds the GIL, logged as a warning). With a warm cache Whisper loads in 2.4–3.9 s. The status pill costs 8.6% (gradient), 10.9% (classic) and 13.1% (wave) of one core while it animates, at 200% display scaling; it only animates while recording, transcribing or translating.
+
+Battery: the Windows battery rate counter was not usable for single dictations. It stayed on one value for several seconds and drifted with other programs, so idle readings varied between 4.3 and 5.3 W (once 9.5 W) and a loop of dictations gave a value below idle. The energy figures above stay estimates; CPU and GPU seconds per audio minute are the comparable numbers.
+
+Still open: a quiet microphone. The dictation errors seen in real use may come from the low input level. Compare the corpus WER at the current Windows input level and at a higher one.
