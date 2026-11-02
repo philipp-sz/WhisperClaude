@@ -41,6 +41,11 @@ def make_app(recorder=None, transcriber=None, paste=None):
     return app, states, pasted
 
 
+def saver(saved):
+    """A remember() that records (text, {the arguments that aren't the default})."""
+    return lambda text, **kw: saved.append((text, {k: v for k, v in kw.items() if v}))
+
+
 def finish(app):
     """Wait for the worker's result event and handle it (like the Tk loop would)."""
     kind, payload = app.events.get(timeout=5)
@@ -349,23 +354,23 @@ class SilentLive(FakeLive):
 
 def auto_app(monkeypatch, speech):
     monkeypatch.setattr(app_module, "LIVE_FEED_S", 0.01)
-    live, pasted, copied, states = SilentLive(speech), [], [], []
+    live, pasted, kept, states = SilentLive(speech), [], [], []
     app = App(SnapshotRecorder(), LiveTranscriber(live), pasted.append,
-              on_state=lambda s, msg="": states.append((s, msg)),
-              stop_after_silence_s=0.5, copy=copied.append)  # the fake mic always has 1 s
+              on_state=lambda s, msg="": states.append((s, msg)), stop_after_silence_s=0.5,
+              on_kept=lambda text, msg: kept.append((text, msg)))  # the fake mic has 1 s
     app.handle(TOGGLE)
-    return app, live, pasted, copied, states
+    return app, live, pasted, kept, states
 
 
-def test_silent_recording_stops_itself_and_copies_instead_of_pasting(monkeypatch):
-    app, live, pasted, copied, states = auto_app(monkeypatch, speech=False)
+def test_silent_recording_stops_itself_and_keeps_the_text_instead_of_pasting(monkeypatch):
+    app, live, pasted, kept, states = auto_app(monkeypatch, speech=False)
     kind, payload = app.events.get(timeout=5)
     assert kind == app_module.AUTO_STOP
     app.handle(kind, payload)
     assert app.state is State.TRANSCRIBING
     finish(app)
-    assert copied == ["live text"] and pasted == []
-    assert states[-1] == (State.IDLE, "Stopped after 0 s of silence – text is in the clipboard")
+    assert kept == [("live text", "Stopped after 0 s of silence")] and pasted == []
+    assert app.state is State.IDLE
 
 
 def test_recording_with_speech_keeps_going(monkeypatch):
@@ -385,14 +390,29 @@ def test_auto_stop_after_a_manual_stop_is_ignored():
 
 # ---------- cancel (Esc) ----------
 
-def test_cancel_discards_the_recording():
-    app, states, pasted = make_app()
+def test_cancel_keeps_the_text_in_the_history_without_pasting():
+    saved, kept, pasted = [], [], []
+    tr = BlockingTranscriber(text="halber Satz")
+    tr.release.set()
+    app = App(FakeRecorder(), tr, pasted.append, remember=saver(saved),
+              on_kept=lambda text, msg: kept.append((text, msg)))
     app.handle(TOGGLE)
     app.handle(app_module.CANCEL)
-    assert app.state is State.IDLE and states[-1] == (State.IDLE, "Cancelled")
-    assert app.transcriber.calls == 0 and pasted == []
+    assert app.state is State.TRANSCRIBING
+    finish(app)
+    assert pasted == [] and kept == [("halber Satz", "Cancelled")]
+    assert saved == [("halber Satz", {"note": "cancelled"})]
     app.handle(TOGGLE)
     assert app.state is State.RECORDING  # next recording works
+
+
+def test_cancel_with_nothing_said_just_says_cancelled():
+    app, states, pasted = make_app(transcriber=BlockingTranscriber(text=""))
+    app.transcriber.release.set()
+    app.handle(TOGGLE)
+    app.handle(app_module.CANCEL)
+    finish(app)
+    assert states[-1] == (State.IDLE, "Cancelled") and pasted == []
 
 
 def test_cancel_outside_a_recording_is_ignored():
@@ -408,7 +428,7 @@ def test_transcript_is_saved_before_the_paste_and_offered_for_copying():
     tr = BlockingTranscriber(text="wichtiger Text")
     tr.release.set()
     app = App(FakeRecorder(), tr, lambda t: order.append(("paste", t)),
-              remember=lambda t: order.append(("saved", t)), on_pasted=offered.append)
+              remember=lambda t, **kw: order.append(("saved", t)), on_pasted=offered.append)
     app.handle(TOGGLE)
     app.handle(TOGGLE)
     finish(app)
@@ -417,7 +437,7 @@ def test_transcript_is_saved_before_the_paste_and_offered_for_copying():
 
 
 def test_failing_history_does_not_stop_the_paste():
-    def broken(text):
+    def broken(text, **kw):
         raise OSError("disk full")
 
     pasted = []
@@ -471,14 +491,14 @@ class FakeTranslation:
 
 
 def make_translate_app(translation, text="hallo welt"):
-    states, pasted, copied, saved = [], [], [], []
+    states, pasted, kept, saved = [], [], [], []
     tr = BlockingTranscriber(text)
     tr.release.set()
     app = App(FakeRecorder(), tr, pasted.append,
-              on_state=lambda s, msg="": states.append((s, msg)), copy=copied.append,
-              remember=lambda *texts: saved.append(texts if len(texts) > 1 else texts[0]),
+              on_state=lambda s, msg="": states.append((s, msg)),
+              on_kept=lambda text, msg: kept.append((text, msg)), remember=saver(saved),
               translation=translation)
-    return app, states, pasted, copied, saved
+    return app, states, pasted, kept, saved
 
 
 def pump_until(app, condition, timeout=5.0):
@@ -495,7 +515,7 @@ def pump_until(app, condition, timeout=5.0):
 
 def test_translate_selection():
     t = FakeTranslation()
-    app, states, pasted, copied, saved = make_translate_app(t)
+    app, states, pasted, kept, saved = make_translate_app(t)
     app.handle(app_module.TRANSLATE)
     assert app.state is State.TRANSLATING
     pump_until(app, lambda: t.picks)
@@ -505,7 +525,8 @@ def test_translate_selection():
     t.answer("deu_Latn")
     pump_until(app, lambda: app.state is State.IDLE)
     assert pasted == ["[deu_Latn] Hallo Welt"]
-    assert saved == [("Hallo Welt", "[deu_Latn] Hallo Welt", "deu_Latn")]  # both, one entry
+    assert saved == [("Hallo Welt", {"translation": "[deu_Latn] Hallo Welt",
+                                     "target": "deu_Latn"})]  # both, one entry
     assert (State.TRANSLATING, "") in states
 
 
@@ -520,17 +541,29 @@ def test_translate_without_selection_says_so():
 
 def test_translate_selection_cancelled_leaves_it_alone():
     t = FakeTranslation()
-    app, states, pasted, copied, saved = make_translate_app(t)
+    app, states, pasted, kept, saved = make_translate_app(t)
     app.handle(app_module.TRANSLATE)
     pump_until(app, lambda: t.picks)
     t.answer(None)
     pump_until(app, lambda: app.state is State.IDLE)
-    assert not pasted and not copied and not saved and not t.translated
+    assert not pasted and not kept and not saved and not t.translated
+
+
+def test_translated_selection_is_kept_when_the_focus_moved():
+    t = FakeTranslation()
+    app, states, pasted, kept, saved = make_translate_app(t)
+    app.handle(app_module.TRANSLATE)
+    pump_until(app, lambda: t.picks)
+    t.answer("fra_Latn", focus_back=False)
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert not pasted and kept == [("[fra_Latn] Hallo Welt", "Not pasted (the focus moved)")]
+    assert saved == [("Hallo Welt", {"translation": "[fra_Latn] Hallo Welt",
+                                     "target": "fra_Latn", "note": "not pasted"})]
 
 
 def test_dictate_and_translate():
     t = FakeTranslation()
-    app, states, pasted, copied, saved = make_translate_app(t)
+    app, states, pasted, kept, saved = make_translate_app(t)
     app.handle(TOGGLE)
     app.handle(app_module.TRANSLATE)  # instead of the second Ctrl tap
     assert app.state is State.TRANSCRIBING
@@ -539,34 +572,36 @@ def test_dictate_and_translate():
     pump_until(app, lambda: app.state is State.IDLE)
     assert t.translated == [("hallo welt", "fra_Latn")]
     assert pasted == ["[fra_Latn] hallo welt"]
-    # the original first (kept whatever happens), then the pair: history merges them
-    assert saved == ["hallo welt", ("hallo welt", "[fra_Latn] hallo welt", "fra_Latn")]
+    # the original first (kept whatever happens), then the translation added to that entry
+    assert saved == [("hallo welt", {}), ("hallo welt", {"translation": "[fra_Latn] hallo welt",
+                                                         "target": "fra_Latn", "update": True})]
 
 
-@pytest.mark.parametrize("focus_back, pasted_expected, copied_expected", [
-    (True, ["hallo welt"], []),   # Esc: paste the dictation untranslated
-    (False, [], ["hallo welt"]),  # clicked elsewhere: clipboard only
+@pytest.mark.parametrize("focus_back, pasted_expected, kept_expected, note", [
+    (True, ["hallo welt"], [], None),  # Esc: paste the dictation untranslated
+    (False, [], [("hallo welt", "Not pasted (the focus moved)")], "not pasted"),  # elsewhere
 ])
-def test_dictation_picker_cancelled(focus_back, pasted_expected, copied_expected):
+def test_dictation_picker_cancelled(focus_back, pasted_expected, kept_expected, note):
     t = FakeTranslation()
-    app, states, pasted, copied, saved = make_translate_app(t)
+    app, states, pasted, kept, saved = make_translate_app(t)
     app.handle(TOGGLE)
     app.handle(app_module.TRANSLATE)
     t.answer(None, focus_back)
     pump_until(app, lambda: app.state is State.IDLE)
-    assert pasted == pasted_expected and copied == copied_expected
-    assert saved == ["hallo welt"] and not t.translated
+    assert pasted == pasted_expected and kept == kept_expected and not t.translated
+    assert saved == [("hallo welt", {})] + ([("hallo welt", {"note": note, "update": True})]
+                                            if note else [])
 
 
 def test_failed_translation_keeps_the_dictation():
     t = FakeTranslation(fail=True)
-    app, states, pasted, copied, saved = make_translate_app(t)
+    app, states, pasted, kept, saved = make_translate_app(t)
     app.handle(TOGGLE)
     app.handle(app_module.TRANSLATE)
     t.answer("fra_Latn")
     pump_until(app, lambda: app.state is State.IDLE)
-    assert not pasted and copied == ["hallo welt"] and saved == ["hallo welt"]
-    assert "translation failed" in states[-1][1]
+    assert not pasted and kept == [("hallo welt", "Translation failed: model broken")]
+    assert saved == [("hallo welt", {})]
 
 
 def test_nothing_recognized_closes_the_picker():

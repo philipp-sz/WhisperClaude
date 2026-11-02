@@ -50,6 +50,7 @@ BUTTON, BUTTON_HOVER = "#3c4043", "#5f6368"
 # The Copy button of the wave and gradient styles: outlined, filled on hover.
 OUTLINED, OUTLINED_HOVER = ("#2a2b2f", "#4a4d53"), ("#3c4043", "#6b6f76")  # (fill, border)
 PASTED_S = 5.0  # how long the pill offers "Copy" after a paste
+KEPT_S = 8.0  # ... and after a dictation that was kept, not pasted
 ALPHA = 0.92
 MESSAGE_S = 2.5
 FRAME_MS = 33
@@ -68,7 +69,9 @@ def message_kind(text: str) -> str:
     low = text.lower()
     if low.startswith(("error", "could not", "config error")) or "failed" in low:
         return "error"
-    return "ok" if low.startswith("copied") else "info"
+    if low.startswith("cancelled"):
+        return "stopped"
+    return "ok" if low.startswith(("copied", "pasted")) else "info"
 
 
 def enable_dpi_awareness() -> None:
@@ -391,23 +394,26 @@ class Overlay:
         if seconds is not None:
             self._after("hide", int(seconds * 1000), self.hide)
 
-    def show_pasted(self, on_copy: Callable[[], None], seconds: float = PASTED_S) -> None:
+    def show_pasted(self, on_copy: Callable[[], None], seconds: float = PASTED_S,
+                    label: str = "Pasted") -> None:
         """After a paste: "✓ Pasted   ⧉ Copy" for a few seconds. A click copies the text
-        again, for when the paste went nowhere (no text field had focus). Hovering keeps the
-        pill open; clicking never takes the focus from the app below."""
+        again, for when the paste went nowhere (no text field had focus). With another label
+        (a kept dictation: "Cancelled", "Not pasted …") it offers the text the same way.
+        Hovering keeps the pill open; clicking never takes the focus from the app below."""
         self._clear()
         s, h = self.scale, self.h
         c = self.canvas
         art = self.style != "classic"
         tx = self._text_x()
-        if art:  # a gradient badge whose check mark draws itself
+        kind = message_kind(label)
+        if art:  # a gradient badge whose symbol draws itself
             badge = self._make_badge()
         else:
-            dot = self._make_dot(GREEN)
+            dot = self._make_dot(GREEN if kind == "ok" else GREY)
             self._place_dot(dot, self.dot_d / 2)
-        self._text(tx, "Pasted")
+        self._text(tx, label)
         # the "Copy" button: a smaller pill with a two-sheets icon
-        bx0 = tx + self.font.measure("Pasted") + 2 * self.gap
+        bx0 = tx + self.font.measure(label) + 2 * self.gap
         inset, bpad, icon = round(6 * s), round(10 * s), round(11 * s)
         bh = h - 2 * inset
         lx = bx0 + bpad + icon + round(6 * s)
@@ -449,7 +455,7 @@ class Overlay:
             self._after("hide", 1500, self.hide)
 
         if art:
-            self._pop_badge(badge, "ok")
+            self._pop_badge(badge, kind)
 
         c.bind("<Button-1>", click)
         c.bind("<Enter>", enter)

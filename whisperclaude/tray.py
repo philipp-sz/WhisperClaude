@@ -266,15 +266,16 @@ class Tray:
     def _entry_item(self, e: Entry, newest: bool) -> pystray.MenuItem:
         """A dictation; a translated one opens a submenu with the original and the
         translation."""
+        when = f"{e.when()} · {e.note}" if e.note else e.when()  # e.g. "12:20 · cancelled"
         if not e.translation:
-            return pystray.MenuItem(f"{e.preview()}\t{e.when()}", self._copy_action(e.text),
+            return pystray.MenuItem(f"{e.preview()}\t{when}", self._copy_action(e.text),
                                     default=newest)
         lang = BY_CODE[e.target].name if e.target in BY_CODE else "Translation"
         both = pystray.Menu(
             pystray.MenuItem(f"Original\t{preview(e.text, 60)}", self._copy_action(e.text)),
             pystray.MenuItem(f"{lang}\t{preview(e.translation, 60)}",
                              self._copy_action(e.translation)))
-        return pystray.MenuItem(f"{e.preview()}\t→ {lang} · {e.when()}", both, default=newest)
+        return pystray.MenuItem(f"{e.preview()}\t→ {lang} · {when}", both, default=newest)
 
     def _copy_action(self, text: str) -> Callable[[object, object], None]:
         # exactly (icon, item): pystray rejects actions with more parameters, defaults included

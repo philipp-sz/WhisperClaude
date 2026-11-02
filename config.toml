@@ -33,7 +33,8 @@ vocabulary = ["Claude", "cloud", "Gemini", "VS Code", "iGPU"]
 
 [recording]
 # A recording with no speech for this long was probably forgotten: it stops by itself, and the
-# text is put in the clipboard (not pasted: you may be typing somewhere else by then). 0 = never.
+# text is kept in "Recent dictations", not pasted (you may be typing somewhere else by then).
+# Esc while recording keeps it the same way. 0 = never.
 stop_after_silence_s = 60
 
 [history]

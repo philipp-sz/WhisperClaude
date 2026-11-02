@@ -49,7 +49,8 @@ def test_level_meter_keeps_silence_flat():
     ("Copy failed – clipboard busy, try again", "error"),
     ("Config error – using defaults (see log)", "error"),
     ("Copied – paste with Ctrl+V", "ok"),
-    ("Cancelled", "info"), ("Too short", "info"), ("Nothing recognized", "info"),
+    ("Cancelled", "stopped"), ("Too short", "info"), ("Nothing recognized", "info"),
+    ("Not pasted (the focus moved)", "info"), ("Translation failed: model broken", "error"),
 ])
 def test_message_badges(text, kind):
     from whisperclaude.overlay import message_kind

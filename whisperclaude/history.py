@@ -9,7 +9,8 @@ repository, never uploaded). `[history] keep` in config.toml sets how many are k
 it off and deletes the file. The log still never contains transcript text.
 
 A translated dictation (or selection) is one entry holding both texts, so either can be
-copied back.
+copied back. A dictation that was not pasted (Esc while recording, auto-stop, focus moved)
+carries a note ("cancelled", "not pasted") that the tray menu shows.
 """
 from __future__ import annotations
 
@@ -37,6 +38,7 @@ class Entry:
     text: str  # what was dictated (or selected)
     translation: str = ""  # its translation, if it was translated
     target: str = ""  # NLLB code of the translation's language, e.g. "fra_Latn"
+    note: str = ""  # "cancelled" / "not pasted"; "" = pasted
 
     def preview(self, width: int = 42) -> str:
         return preview(self.text, width)
@@ -65,7 +67,8 @@ class History:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
             self._entries = [Entry(float(e["time"]), str(e["text"]), str(e.get("translation", "")),
-                                   str(e.get("target", ""))) for e in raw][:keep]
+                                   str(e.get("target", "")), str(e.get("note", "")))
+                             for e in raw][:keep]
         except FileNotFoundError:
             pass
         except (OSError, ValueError, KeyError, TypeError):
@@ -79,18 +82,20 @@ class History:
         with self._lock:
             return self._entries[0] if self._entries else None
 
-    def add(self, text: str, translation: str = "", target: str = "") -> None:
-        """Remember a dictation (and save the file) before it is pasted. With a translation:
-        if the newest entry is this text without one (a dictation saved before it was
-        translated), the translation is added to it, else it is a new entry."""
+    def add(self, text: str, translation: str = "", target: str = "", note: str = "",
+            update: bool = False) -> None:
+        """Remember a dictation (and save the file) before it is pasted. update: add the
+        translation and note to the newest entry if it holds this text (the same dictation,
+        saved before it was translated or kept), else it is a new entry."""
         if self.keep <= 0 or not text.strip():
             return
         with self._lock:
             newest = self._entries[0] if self._entries else None
-            if translation and newest and newest.text == text and not newest.translation:
-                self._entries[0] = Entry(newest.time, text, translation, target)
+            if update and newest and newest.text == text:
+                self._entries[0] = Entry(newest.time, text, translation or newest.translation,
+                                         target or newest.target, note or newest.note)
             else:
-                entry = Entry(time.time(), text, translation, target if translation else "")
+                entry = Entry(time.time(), text, translation, target if translation else "", note)
                 self._entries = [entry] + self._entries[:self.keep - 1]
             self._save()
 
@@ -105,6 +110,7 @@ class History:
         try:
             rows = [{"time": e.time, "text": e.text}
                     | ({"translation": e.translation, "target": e.target} if e.translation else {})
+                    | ({"note": e.note} if e.note else {})
                     for e in self._entries]
             tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, self.path)

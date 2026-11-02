@@ -54,7 +54,7 @@ def test_a_translation_joins_its_dictation_and_survives_a_restart(tmp_path):
     h = History(tmp_path)
     h.add("erstes")
     h.add("hallo welt")  # saved before the translation
-    h.add("hallo welt", "bonjour le monde", "fra_Latn")
+    h.add("hallo welt", "bonjour le monde", "fra_Latn", update=True)
     first, second = h.entries()
     assert (first.text, first.translation, first.target) == ("hallo welt", "bonjour le monde", "fra_Latn")
     assert second.text == "erstes" and second.translation == ""
@@ -67,3 +67,12 @@ def test_a_translation_joins_its_dictation_and_survives_a_restart(tmp_path):
 def test_reads_a_history_file_from_before_translations(tmp_path):
     (tmp_path / "history.json").write_text('[{"time": 1.0, "text": "alt"}]', encoding="utf-8")
     assert History(tmp_path).entries() == [Entry(1.0, "alt")]
+
+
+def test_kept_dictations_carry_a_note_and_only_update_merges(tmp_path):
+    h = History(tmp_path)
+    h.add("ok")
+    h.add("ok", note="cancelled")  # the same words again, Esc'ed: a new entry
+    h.add("ok", note="not pasted", update=True)  # follow-up of that dictation
+    assert [(e.text, e.note) for e in h.entries()] == [("ok", "not pasted"), ("ok", "")]
+    assert [e.note for e in History(tmp_path).entries()] == ["not pasted", ""]

@@ -139,3 +139,9 @@ def test_translated_dictation_offers_both_texts(tmp_path):
     translation(tray.icon)
     original(tray.icon)
     assert copied == ["Bonjour le monde", "Hallo Welt"]
+
+
+def test_kept_dictation_is_marked_in_the_menu(tmp_path):
+    tray, history, _ = make_tray(tmp_path)
+    history.add("halber Satz", note="cancelled")
+    assert str(tray._recent_items()[1].text).endswith(" · cancelled")

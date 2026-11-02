@@ -34,7 +34,7 @@ from whisperclaude.hotkey import GapDetector, key_label, parse_key, start_hotkey
 from whisperclaude.history import History
 from whisperclaude.inserter import ClipboardError, copy_text, paste_text
 from whisperclaude.languages import LANGUAGES
-from whisperclaude.overlay import Overlay, enable_dpi_awareness
+from whisperclaude.overlay import KEPT_S, Overlay, enable_dpi_awareness
 from whisperclaude.picker import LanguagePicker
 from whisperclaude.recorder import Recorder
 from whisperclaude.translation import RecentLanguages, Translation
@@ -240,8 +240,9 @@ def main() -> None:
                 copy_to_clipboard, style=cfg.tray.style, level_fn=lambda: overlay.meter.unit)
     tray.start()
 
-    def remember(text: str, translation: str = "", target: str = "") -> None:  # worker thread
-        history.add(text, translation, target)
+    def remember(text: str, translation: str = "", target: str = "", note: str = "",
+                 update: bool = False) -> None:  # worker thread
+        history.add(text, translation, target, note, update)
         tray.refresh()
 
     def on_state(state: State, msg: str = "") -> None:
@@ -260,10 +261,12 @@ def main() -> None:
     postprocess = ((lambda text: apply_commands(text, cmd.trigger, cmd.bullet))
                    if cmd.enabled else None)
     app = App(recorder, None, paste, events, on_state, postprocess,  # starts in State.LOADING
-              stop_after_silence_s=cfg.recording.stop_after_silence_s, copy=copy_text,
+              stop_after_silence_s=cfg.recording.stop_after_silence_s,
               remember=remember,
               on_pasted=lambda text: (overlay.show_pasted(lambda: copy_to_clipboard(text)),
                                       tray.flash_pasted()),
+              on_kept=lambda text, msg: overlay.show_pasted(lambda: copy_to_clipboard(text),
+                                                            KEPT_S, label=msg),
               translation=translation)
     listener = start_hotkey_listener(
         events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s,

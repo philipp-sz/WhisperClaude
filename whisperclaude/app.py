@@ -33,6 +33,7 @@ CANCEL = "cancel"  # the cancel key (Esc): discard a running recording, ignored 
 TRANSLATE = "translate"  # the translate key (Alt): translate the dictation or the selection
 PICK = "pick"  # worker -> Tk: show the language picker; payload: _TranslateJob
 UNPICK = "unpick"  # worker -> Tk: close the picker, nothing to translate; payload: _TranslateJob
+KEPT = "kept"  # worker -> Tk: saved to the history but not pasted; payload: (text, message)
 GUESS = "guess"  # worker -> Tk: detected source languages of a dictation; payload: (job, codes)
 TRANSLATING = "translating"  # worker -> Tk: the translation itself has started
 
@@ -68,6 +69,10 @@ class WakeQueue(queue.Queue):
                 self.wake()
             except Exception:  # consumer not ready (Tk not in mainloop yet / shut down)
                 pass           # -> the consumer's slow backup poll picks the item up
+
+
+NOT_PASTED = "not pasted"  # history note of a kept dictation
+MOVED = "Not pasted (the focus moved)"
 
 
 class State(enum.Enum):
@@ -191,16 +196,19 @@ class App:
         on_state: Callable[[State, str], None] | None = None,  # msg = text to show the user
         postprocess: Callable[[str], str] | None = None,  # e.g. spoken formatting commands
         stop_after_silence_s: float = 0.0,  # auto-stop a forgotten recording; 0 = never
-        copy: Callable[[str], None] | None = None,  # puts text in the clipboard (no paste)
-        # saves each transcript before pasting: (text) or (text, translation, target code)
+        # saves each transcript before pasting:
+        # (text, translation="", target="", note="", update=False)
         remember: Callable[..., None] | None = None,
         on_pasted: Callable[[str], None] | None = None,  # after a paste (Tk thread)
+        on_kept: Callable[[str, str], None] | None = None,  # (text, message): not pasted
         translation: TranslationLike | None = None,  # None = translate key off
     ) -> None:
         """transcriber=None starts in LOADING; call set_transcriber() once it's ready.
 
-        An auto-stopped recording isn't pasted but copied (if `copy` is given): a minute later
-        you may be typing somewhere else, and text appearing at the cursor would be a surprise.
+        Some dictations are kept instead of pasted: Esc while recording, an auto-stopped
+        recording (a minute later you may be typing somewhere else), the picker losing the
+        focus, a failed translation. They go to the history and on_kept offers to copy them.
+        The app never writes the clipboard by itself: it keeps what the user put there.
         """
         self.recorder = recorder
         self.transcriber = transcriber
@@ -209,9 +217,9 @@ class App:
         self.on_state = on_state or (lambda state, msg: None)
         self.postprocess = postprocess
         self.stop_after_silence_s = stop_after_silence_s
-        self.copy = copy
         self.remember = remember
         self.on_pasted = on_pasted
+        self.on_kept = on_kept
         self.translation = translation
         self.state = State.IDLE if transcriber is not None else State.LOADING
         self.exit_reason: str | None = None
@@ -257,13 +265,8 @@ class App:
             self._set(State.TRANSLATING)
         elif kind == CANCEL:
             if self.state is State.RECORDING:
-                self._stop_live()
-                try:
-                    self.recorder.stop()
-                except Exception:
-                    log.exception("could not stop recording")
                 log.info("recording cancelled")
-                self._set(State.IDLE, "Cancelled")
+                self._stop_recording(cancelled=True)
         elif kind == AUTO_STOP:
             if self.state is State.RECORDING:  # not if a tap stopped it in the meantime
                 self._stop_recording(auto=True)
@@ -273,6 +276,11 @@ class App:
             self._set(State.IDLE)
             if self.on_pasted is not None:
                 self.on_pasted(str(payload))
+        elif kind == KEPT:
+            text, msg = payload
+            self._set(State.IDLE, "" if self.on_kept else msg)
+            if self.on_kept is not None:
+                self.on_kept(text, msg)
         elif kind == ERROR:
             self._set(State.IDLE, f"Error: {payload}")
         elif kind in self.handlers:
@@ -331,12 +339,12 @@ class App:
         if job.choice is None:
             self.events.put((DONE, ""))  # cancelled: the selection is left as it was
             return
-        self._translate_and_paste(text, job.choice, to_clipboard=not job.focus_back)
+        self._translate_and_paste(text, job.choice, keep=not job.focus_back)
 
-    def _translate_and_paste(self, text: str, choice: Choice, to_clipboard: bool = False,
+    def _translate_and_paste(self, text: str, choice: Choice, keep: bool = False,
                              original_saved: bool = False) -> None:
-        """Worker thread. A failed translation of a dictation leaves the original in the
-        clipboard (it is in the history too)."""
+        """Worker thread. keep: the focus moved, so the translation is kept, not pasted.
+        A failed translation of a dictation keeps the original (it is in the history)."""
         target, source = choice
         self.events.put((TRANSLATING, None))
         try:
@@ -346,46 +354,48 @@ class App:
                      source or "auto", target, time.perf_counter() - t0)
         except Exception as e:
             log.exception("translation failed")
-            if original_saved and self.copy is not None:
-                try:
-                    self.copy(text)
-                    self.events.put((ERROR, f"translation failed ({e}) – the original text "
-                                            f"is in the clipboard"))
-                    return
-                except Exception:
-                    log.exception("copy failed")
-            self.events.put((ERROR, f"translation failed: {e}"))
+            if original_saved:
+                self.events.put((KEPT, (text, f"Translation failed: {e}")))
+            else:
+                self.events.put((ERROR, f"translation failed: {e}"))
             return
-        self._remember(text, translated, target)  # one entry: original and translation
-        self._deliver(translated, to_clipboard and self.copy is not None,
-                      "Not pasted (the focus moved) – the translation is in the clipboard",
-                      remember=False)
+        # one entry with original and translation (a dictation's original is saved already)
+        self._remember(text, translated, target, NOT_PASTED if keep else "", original_saved)
+        if keep:
+            self.events.put((KEPT, (translated, MOVED)))
+        else:
+            self._paste(translated, remember=False)
 
-    def _remember(self, *texts: str) -> None:
-        """Worker thread: save to the history, (text) or (text, translation, target)."""
+    def _remember(self, text: str, translation: str = "", target: str = "", note: str = "",
+                  update: bool = False) -> None:
+        """Worker thread: save to the history. update: add to the newest entry (the same
+        dictation, saved before it was translated or kept)."""
         if self.remember is None:
             return
         try:
-            self.remember(*texts)
+            self.remember(text, translation=translation, target=target, note=note,
+                          update=update)
         except Exception:
             log.exception("could not save the dictation to the history")
 
-    def _deliver(self, text: str, to_clipboard: bool, clipboard_msg: str,
-                 remember: bool = True) -> None:
-        """Worker thread: save to the history, then paste (or copy) the text."""
+    def _paste(self, text: str, remember: bool = True) -> None:
+        """Worker thread: save to the history, then paste the text."""
         if remember:  # first: if the paste goes nowhere, the text is still in the history
             self._remember(text)
         try:
-            (self.copy if to_clipboard else self.paste)(text)
+            self.paste(text)
         except Exception as e:  # clipboard can be locked by another app
             log.exception("paste failed")
             self.events.put((ERROR, f"paste failed: {e}"))
             return
-        log.info("%s %d characters", "copied" if to_clipboard else "pasted", len(text))  # privacy
-        if to_clipboard:
-            self.events.put((DONE, clipboard_msg))
-        else:
-            self.events.put((PASTED, text))
+        log.info("pasted %d characters", len(text))  # privacy: never the text itself
+        self.events.put((PASTED, text))
+
+    def _keep(self, text: str, msg: str, note: str, update: bool = False) -> None:
+        """Worker thread: save to the history and offer to copy, without pasting."""
+        self._remember(text, note=note, update=update)
+        log.info("kept %d characters (%s)", len(text), note)
+        self.events.put((KEPT, (text, msg)))
 
     def _start_recording(self) -> None:
         try:
@@ -408,7 +418,8 @@ class App:
             live.stop()
         return live
 
-    def _stop_recording(self, auto: bool = False, translate: bool = False) -> None:
+    def _stop_recording(self, auto: bool = False, translate: bool = False,
+                        cancelled: bool = False) -> None:
         live = self._stop_live()
         try:
             audio = self.recorder.stop()
@@ -417,21 +428,22 @@ class App:
             self._set(State.IDLE, f"Error: {e}")
             return
         if len(audio) < MIN_AUDIO_S * SAMPLE_RATE:
-            self._set(State.IDLE, "Too short")
+            self._set(State.IDLE, "Cancelled" if cancelled else "Too short")
             return
         self._set(State.TRANSCRIBING)
         job = None
         if translate:  # pick the language while the worker transcribes
             job = self._job = _TranslateJob(dictation=True)
             self._show_picker(job)
-        threading.Thread(target=self._transcribe, args=(audio, live, auto, job),
+        threading.Thread(target=self._transcribe, args=(audio, live, auto, job, cancelled),
                          daemon=True).start()
 
     def _transcribe(self, audio: np.ndarray, live: _LiveRun | None = None,
-                    auto: bool = False, job: _TranslateJob | None = None) -> None:
-        """Worker thread: transcribe and paste. Pasting here (not on the Tk thread) keeps
-        the main loop free, so the hotkey thread never waits on it. State stays
-        TRANSCRIBING until pasted, so toggles can't interfere."""
+                    auto: bool = False, job: _TranslateJob | None = None,
+                    cancelled: bool = False) -> None:
+        """Worker thread: transcribe and paste (or keep, see App). Pasting here (not on the
+        Tk thread) keeps the main loop free, so the hotkey thread never waits on it. State
+        stays TRANSCRIBING until pasted, so toggles can't interfere."""
         try:
             t0 = time.perf_counter()
             text = live.finish(audio) if live else self.transcriber.transcribe(audio)
@@ -448,29 +460,36 @@ class App:
         if not text:
             if job is not None:
                 self.events.put((UNPICK, job))
-            self.events.put((DONE, stopped if auto else "Nothing recognized"))
+            self.events.put((DONE, "Cancelled" if cancelled else
+                             stopped if auto else "Nothing recognized"))
             return
         if self.postprocess is not None:
             try:  # judged on the raw text above: dictating only "command new line" is valid
                 text = self.postprocess(text)
             except Exception:
                 log.exception("postprocessing failed, pasting the raw transcript")
-        if job is not None:
-            self._remember(text)  # the original is kept, whatever happens to the translation
-            if not job.picked.is_set():
-                self.events.put((GUESS, (job, self.translation.guess(text))))
-            job.picked.wait()
-            if job.choice is not None:
-                self._translate_and_paste(text, job.choice, to_clipboard=not job.focus_back,
-                                          original_saved=True)
-                return
-            # Esc in the picker: paste the dictation as it is. Focus moved away: clipboard.
-            self._deliver(text, not job.focus_back and self.copy is not None,
-                          "Not pasted (the focus moved) – the text is in the clipboard",
-                          remember=False)
-            return
-        self._deliver(text, auto and self.copy is not None,
-                      f"{stopped} – text is in the clipboard")
+        if cancelled:
+            self._keep(text, "Cancelled", "cancelled")
+        elif job is not None:
+            self._translate_dictation(text, job)
+        elif auto:
+            self._keep(text, stopped, NOT_PASTED)
+        else:
+            self._paste(text)
+
+    def _translate_dictation(self, text: str, job: _TranslateJob) -> None:
+        """Worker thread: wait for the picker, then translate and paste the dictation."""
+        self._remember(text)  # the original is kept, whatever happens to the translation
+        if not job.picked.is_set():
+            self.events.put((GUESS, (job, self.translation.guess(text))))
+        job.picked.wait()
+        if job.choice is not None:
+            self._translate_and_paste(text, job.choice, keep=not job.focus_back,
+                                      original_saved=True)
+        elif job.focus_back:  # Esc in the picker: paste the dictation as it is
+            self._paste(text, remember=False)
+        else:  # clicked somewhere else
+            self._keep(text, MOVED, NOT_PASTED, update=True)
 
     def process_pending(self) -> bool:
         """Handle all queued events without blocking (called from the Tk loop).
