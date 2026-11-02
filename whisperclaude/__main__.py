@@ -10,6 +10,8 @@ Main thread: Tk (overlay, language picker) sleeps until the event queue wakes it
 threads: hotkeys. Worker: transcription, translation + paste. pystray: tray icon in its own
 thread. Model loader: short-lived, loads Whisper and then the translation model.
 """
+from __future__ import annotations
+
 import ctypes
 import functools
 import logging
