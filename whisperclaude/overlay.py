@@ -143,24 +143,14 @@ class Overlay:
     """Uses the Tk root window itself as the pill. All methods must run on the Tk thread."""
 
     def __init__(self, root: tk.Tk, style: str = "wave") -> None:
-        self.root = root
-        self.style = style
+        self.root, self.style = root, style
         root.withdraw()
         root.overrideredirect(True)
         root.configure(bg=KEY)
         root.attributes("-topmost", True)
         root.attributes("-transparentcolor", KEY)
         root.attributes("-alpha", 0.0)
-        s = self.scale = root.winfo_fpixels("1i") / 96
-        self.font = tkfont.Font(family="Segoe UI", size=11)
-        self.h = round(36 * s)
-        self.pad, self.gap, self.dot_d = round(16 * s), round(10 * s), round(10 * s)
-        self.bar_w, self.bar_gap = max(2, round(3 * s)), max(1, round(2 * s))
-        self.bar_min, self.bar_max = max(2, round(4 * s)), round(20 * s)
-        self.bars_w = N_BARS * (self.bar_w + self.bar_gap) - self.bar_gap
-        self.art_w = round(96 * s) if style == "wave" else self.bars_w
-        self.art_h = self.h - 2 * round(4 * s)
-        self.badge_size = round(20 * s)
+        self._init_sizes(root.winfo_fpixels("1i") / 96)
         self._badge: ImageTk.PhotoImage | None = None # the start pill's spinner, then check
         self._images: list[ImageTk.PhotoImage] = [] # shown images; Tk keeps no reference
         self.canvas = tk.Canvas(root, bg=KEY, highlightthickness=0, bd=0)
@@ -180,11 +170,26 @@ class Overlay:
         self._dot: int | None = None
         self._label: int | None = None
         self._start_target = float(self.h)
+        self._first_show()
 
-        # The very first show activates the window (before our styles apply);
-        # hand focus straight back to whatever had it.
+    def _init_sizes(self, s: float) -> None:
+        """Sizes in pixels for the display scaling s (1.0 = 96 dpi)."""
+        self.scale = s
+        self.font = tkfont.Font(family="Segoe UI", size=11)
+        self.h = round(36 * s)
+        self.pad, self.gap, self.dot_d = round(16 * s), round(10 * s), round(10 * s)
+        self.bar_w, self.bar_gap = max(2, round(3 * s)), max(1, round(2 * s))
+        self.bar_min, self.bar_max = max(2, round(4 * s)), round(20 * s)
+        self.bars_w = N_BARS * (self.bar_w + self.bar_gap) - self.bar_gap
+        self.art_w = round(96 * s) if self.style == "wave" else self.bars_w
+        self.art_h = self.h - 2 * round(4 * s)
+        self.badge_size = round(20 * s)
+
+    def _first_show(self) -> None:
+        """The very first show activates the window (before our styles apply); hand focus
+        straight back to whatever had it."""
+        root, user32 = self.root, ctypes.windll.user32
         root.geometry("1x1+0+0")
-        user32 = ctypes.windll.user32
         previous = user32.GetForegroundWindow()
         root.deiconify()
         root.update_idletasks()
@@ -401,69 +406,79 @@ class Overlay:
         (a kept dictation: "Cancelled", "Not pasted …") it offers the text the same way.
         Hovering keeps the pill open; clicking never takes the focus from the app below."""
         self._clear()
-        s, h = self.scale, self.h
-        c = self.canvas
-        art = self.style != "classic"
-        tx = self._text_x()
         kind = message_kind(label)
-        if art: # a gradient badge whose symbol draws itself
+        if self.style != "classic": # a gradient badge whose symbol draws itself
             badge = self._make_badge()
         else:
-            dot = self._make_dot(GREEN if kind == "ok" else GREY)
-            self._place_dot(dot, self.dot_d / 2)
+            self._place_dot(self._make_dot(GREEN if kind == "ok" else GREY), self.dot_d / 2)
+        tx = self._text_x()
         self._text(tx, label)
-        # the "Copy" button: a smaller pill with a two-sheets icon
-        bx0 = tx + self.font.measure(label) + 2 * self.gap
+        x1, set_hover = self._copy_button(tx + self.font.measure(label) + 2 * self.gap)
+        self._set_width(x1 + self.pad - round(6 * self.scale))
+        if self.style != "classic":
+            self._pop_badge(badge, kind)
+        self._offer_copy(on_copy, set_hover)
+        self._fade(ALPHA)
+        self._after("hide", int(seconds * 1000), self.hide)
+
+    def _copy_button(self, x0: float) -> tuple[float, Callable[[bool], None]]:
+        """The "Copy" button from x0: a smaller pill with a two-sheets icon. Returns its right
+        edge and a function that switches its hover look."""
+        s, h, c = self.scale, self.h, self.canvas
         inset, bpad, icon = round(6 * s), round(10 * s), round(11 * s)
-        bh = h - 2 * inset
-        lx = bx0 + bpad + icon + round(6 * s)
-        bx1 = lx + self.font.measure("Copy") + bpad
-        if art:
-            fill, hover = OUTLINED[0], OUTLINED_HOVER[0]
-            looks = [ImageTk.PhotoImage(Image.fromarray(pillart.capsule(
-                round(bx1 - bx0), bh, f, b, max(1.0, s), BG))) for f, b in (OUTLINED, OUTLINED_HOVER)]
-            self._images += looks
-            c.create_image(bx0, inset, image=looks[0], anchor="nw", tags=("content", "btnimg"))
-        else:
-            fill, hover = BUTTON, BUTTON_HOVER
-            c.create_oval(bx0, inset, bx0 + bh, h - inset, fill=fill, outline="", tags=("content", "btn"))
-            c.create_oval(bx1 - bh, inset, bx1, h - inset, fill=fill, outline="", tags=("content", "btn"))
-            c.create_rectangle(bx0 + bh / 2, inset, bx1 - bh / 2, h - inset, fill=fill, outline="",
-                               tags=("content", "btn"))
-        ix, iy, sheet, off = bx0 + bpad, h / 2 - icon / 2, icon * 0.72, icon * 0.28
+        lx = x0 + bpad + icon + round(6 * s)
+        x1 = lx + self.font.measure("Copy") + bpad
+        fill, hover, looks = self._button_background(x0, x1, inset)
+        ix, iy, sheet, off = x0 + bpad, h / 2 - icon / 2, icon * 0.72, icon * 0.28
         width = max(1.0, 1.4 * s)
         c.create_rectangle(ix + off, iy, ix + off + sheet, iy + sheet, outline=FG, width=width,
                            tags="content")
         c.create_rectangle(ix, iy + off, ix + sheet, iy + off + sheet, outline=FG, width=width,
                            fill=fill, tags=("content", "btn"))
         self._text(lx, "Copy")
-        self._set_width(bx1 + self.pad - inset)
 
-        def click(_event: object) -> None:
-            on_copy()
+        def set_hover(on: bool) -> None:
+            c.itemconfig("btn", fill=hover if on else fill)
+            if looks:
+                c.itemconfig("btnimg", image=looks[on])
+
+        return x1, set_hover
+
+    def _button_background(self, x0: float, x1: float,
+                           inset: int) -> tuple[str, str, list[ImageTk.PhotoImage]]:
+        """Fill and hover fill of the button, and its two images (colored styles: outlined and
+        anti-aliased; classic: canvas shapes, no images)."""
+        c, h = self.canvas, self.h
+        bh = h - 2 * inset
+        if self.style != "classic":
+            looks = [ImageTk.PhotoImage(Image.fromarray(pillart.capsule(
+                round(x1 - x0), bh, f, b, max(1.0, self.scale), BG))) for f, b in (OUTLINED, OUTLINED_HOVER)]
+            self._images += looks
+            c.create_image(x0, inset, image=looks[0], anchor="nw", tags=("content", "btnimg"))
+            return OUTLINED[0], OUTLINED_HOVER[0], looks
+        c.create_oval(x0, inset, x0 + bh, h - inset, fill=BUTTON, outline="", tags=("content", "btn"))
+        c.create_oval(x1 - bh, inset, x1, h - inset, fill=BUTTON, outline="", tags=("content", "btn"))
+        c.create_rectangle(x0 + bh / 2, inset, x1 - bh / 2, h - inset, fill=BUTTON, outline="",
+                           tags=("content", "btn"))
+        return BUTTON, BUTTON_HOVER, []
+
+    def _offer_copy(self, on_copy: Callable[[], None], set_hover: Callable[[bool], None]) -> None:
+        """The pill takes clicks: a click copies, hovering keeps it open."""
+        c = self.canvas
 
         def enter(_event: object) -> None:
-            c.itemconfig("btn", fill=hover)
-            if art:
-                c.itemconfig("btnimg", image=looks[1])
+            set_hover(True)
             self._cancel("hide")
 
         def leave(_event: object) -> None:
-            c.itemconfig("btn", fill=fill)
-            if art:
-                c.itemconfig("btnimg", image=looks[0])
+            set_hover(False)
             self._after("hide", 1500, self.hide)
 
-        if art:
-            self._pop_badge(badge, kind)
-
-        c.bind("<Button-1>", click)
+        c.bind("<Button-1>", lambda _event: on_copy())
         c.bind("<Enter>", enter)
         c.bind("<Leave>", leave)
         c.configure(cursor="hand2")
         self._set_clickable(True)
-        self._fade(ALPHA)
-        self._after("hide", int(seconds * 1000), self.hide)
 
     def show_recording(self) -> None:
         self._clear()

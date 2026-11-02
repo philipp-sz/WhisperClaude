@@ -82,7 +82,25 @@ class LanguagePicker:
         win.attributes("-topmost", True)
         win.configure(bg=BG, highlightthickness=1, highlightbackground=EDGE)
         pad = round(10 * s)
-        header = tk.Frame(win, bg=BG)
+        self._build_header(pad)
+        self.query = tk.StringVar()
+        self.entry = tk.Entry(win, textvariable=self.query, bg=FIELD, fg=FG, insertbackground=FG,
+                              relief="flat", font=self.font, highlightthickness=0)
+        self.entry.pack(fill="x", padx=pad, pady=round(8 * s), ipady=round(4 * s))
+        self.list = tk.Listbox(win, height=ROWS, bg=BG, fg=FG, font=self.font, relief="flat",
+                               highlightthickness=0, selectbackground=SELECT,
+                               selectforeground=FG, activestyle="none", takefocus=0,
+                               exportselection=False)
+        self.list.pack(fill="both", padx=pad)
+        self.hint = tk.Label(win, bg=BG, fg=GREY, font=self.small, anchor="w")
+        self.hint.pack(fill="x", padx=pad, pady=(round(4 * s), pad))
+        self.query.trace_add("write", lambda *a: self._refresh())
+        self._bind_keys()
+
+    def _build_header(self, pad: int) -> None:
+        """"From [chip] → To [chip]"; a click on a chip switches the list to it."""
+        s = self.scale
+        header = tk.Frame(self.win, bg=BG)
         header.pack(fill="x", padx=pad, pady=(pad, 0))
         self.chips: dict[str, tk.Label] = {}
         for mode, caption in (("from", "From"), ("to", "To")):
@@ -98,18 +116,8 @@ class LanguagePicker:
             if mode == "from":
                 tk.Label(header, text="→", bg=BG, fg=GREY, font=self.font).pack(
                     side="left", anchor="s", padx=round(6 * s), pady=(0, round(4 * s)))
-        self.query = tk.StringVar()
-        self.entry = tk.Entry(win, textvariable=self.query, bg=FIELD, fg=FG, insertbackground=FG,
-                              relief="flat", font=self.font, highlightthickness=0)
-        self.entry.pack(fill="x", padx=pad, pady=round(8 * s), ipady=round(4 * s))
-        self.list = tk.Listbox(win, height=ROWS, bg=BG, fg=FG, font=self.font, relief="flat",
-                               highlightthickness=0, selectbackground=SELECT,
-                               selectforeground=FG, activestyle="none", takefocus=0,
-                               exportselection=False)
-        self.list.pack(fill="both", padx=pad)
-        self.hint = tk.Label(win, bg=BG, fg=GREY, font=self.small, anchor="w")
-        self.hint.pack(fill="x", padx=pad, pady=(round(4 * s), pad))
-        self.query.trace_add("write", lambda *a: self._refresh())
+
+    def _bind_keys(self) -> None:
         # Enter and Esc act on the key-up: the whole key press stays in the picker, so no
         # auto-repeat reaches the app the focus goes back to.
         for key, fn in (("<KeyRelease-Return>", lambda e: self._enter()),

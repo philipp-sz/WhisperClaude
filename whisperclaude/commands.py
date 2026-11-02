@@ -55,6 +55,60 @@ def _pattern(trigger: str) -> re.Pattern[str]:
         rf"(?<![\w-]){words}[ \t]*(?:{_WORDS})(?=[\s,.;:!?]|$)", re.IGNORECASE)
 
 
+class _Output:
+    """The text built so far, and whether it is inside a bullet item or a quote."""
+
+    def __init__(self) -> None:
+        self.text = ""
+        self.in_item = False # inside a bullet item: it ends at the end of its sentence
+        self.quote_open = False # between open and close quote: sentence ends there don't count
+
+    def add(self, segment: str) -> None:
+        """Dictated text. A sentence end closes a bullet item; what follows starts after a
+        blank line."""
+        if self.in_item and not self.quote_open:
+            end = _SENTENCE_END.search(segment)
+            if end:
+                head, rest = segment[:end.end()], segment[end.end():]
+                self.in_item = False
+                self.text += head
+                self.text += "\n\n" + rest.lstrip() if rest.strip() else rest
+                return
+        self.text += segment
+
+    def line_break(self, kind: str, bullet: str) -> None:
+        """new line, new paragraph, bullet or separator."""
+        out = self.text.rstrip(" \t")
+        if out.endswith((",", ";")): # the pause before the command, not real punctuation
+            out = out[:-1].rstrip(" \t")
+        self.in_item = False
+        if kind == "bullet":
+            if out and not out.endswith("\n"):
+                out += "\n"
+            out += bullet
+            self.in_item = True
+        elif kind == "paragraph":
+            out = out.rstrip("\n") + "\n\n" if out.strip("\n") else "\n\n"
+        elif kind == "separator":
+            out = out.rstrip("\n") + "\n\n---\n\n" if out.strip("\n") else "---\n\n"
+        else:
+            out += "\n"
+        self.text = out
+
+    def open_quote(self) -> None:
+        if self.text and not self.text[-1].isspace() and self.text[-1] not in "([{":
+            self.text += " "
+        self.text += '"'
+        self.quote_open = True
+
+    def close_quote(self) -> None:
+        out = self.text.rstrip(" \t")
+        if out.endswith(","):
+            out = out[:-1]
+        self.text = out + '"'
+        self.quote_open = False
+
+
 def apply_commands(text: str, trigger: str = "command", bullet: str = "- ") -> str:
     """Replace "<trigger> <command>" pairs in the transcript. Text without any is returned as is.
 
@@ -65,66 +119,32 @@ def apply_commands(text: str, trigger: str = "command", bullet: str = "- ") -> s
     if not pattern.search(text):
         return text
 
-    out = ""
-    pos = 0
-    in_item = False # inside a bullet item: it ends at the end of its sentence
-    quote_open = False # between open quote and close quote: sentence ends there don't count
-
-    def add(segment: str) -> None:
-        nonlocal out, in_item
-        if in_item and not quote_open:
-            end = _SENTENCE_END.search(segment)
-            if end:
-                head, rest = segment[:end.end()], segment[end.end():]
-                in_item = False
-                out += head
-                out += "\n\n" + rest.lstrip() if rest.strip() else rest
-                return
-        out += segment
-
+    out, pos = _Output(), 0
     for m in pattern.finditer(text):
         if _NOUN_BEFORE.search(text[:m.start()]):
             continue # ordinary sentence about a command: leave the words alone
         if m.start() >= pos:
-            add(text[pos:m.start()])
-        kind = m.lastgroup
-        pos = m.end()
+            out.add(text[pos:m.start()])
+        kind, pos = m.lastgroup, m.end()
         if kind in ("newline", "paragraph", "bullet", "separator"):
-            out = out.rstrip(" \t")
-            if out.endswith((",", ";")): # the pause before the command, not real punctuation
-                out = out[:-1].rstrip(" \t")
-            in_item = False
-            if kind == "bullet":
-                if out and not out.endswith("\n"):
-                    out += "\n"
-                out += bullet
-                in_item = True
-            elif kind == "paragraph":
-                out = out.rstrip("\n") + "\n\n" if out.strip("\n") else "\n\n"
-            elif kind == "separator":
-                out = out.rstrip("\n") + "\n\n---\n\n" if out.strip("\n") else "---\n\n"
-            else:
-                out += "\n"
+            out.line_break(kind, bullet)
             pos = _AFTER_BREAK.match(text, pos).end() # "new line." -> the period is the command's
         elif kind == "open":
-            if out and not out[-1].isspace() and out[-1] not in "([{":
-                out += " "
-            out += '"'
-            quote_open = True
+            out.open_quote()
             pos = _AFTER_OPEN.match(text, pos).end() # attach to the next word
         else: # close
-            out = out.rstrip(" \t")
-            if out.endswith(","):
-                out = out[:-1]
-            out += '"'
-            quote_open = False
-            if out[-2:-1] in (".", "!", "?") and text[pos:pos + 1] == ".":
+            out.close_quote()
+            if out.text[-2:-1] in (".", "!", "?") and text[pos:pos + 1] == ".":
                 pos += 1 # the command's own period would double the one inside the quote
-    add(text[pos:])
+    out.add(text[pos:])
+    return _without_item_periods(out.text, bullet)
 
-    lines = out.split("\n")
+
+def _without_item_periods(text: str, bullet: str) -> str:
+    """List items conventionally have no final period."""
+    lines = text.split("\n")
     for i, line in enumerate(lines):
-        if line.startswith(bullet): # list items conventionally have no final period
+        if line.startswith(bullet):
             line = line.rstrip()
             if line.endswith(".") and not line.endswith(".."):
                 line = line[:-1]

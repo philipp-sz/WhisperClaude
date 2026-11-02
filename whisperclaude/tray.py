@@ -187,20 +187,24 @@ class Tray:
         self._menu_lock = threading.Lock()
         self._menu_open = False
         self._menu_stale = False
-        on_quit, on_restart = self._logged("Quit", on_quit), self._logged("Restart", on_restart)
-        ask_quit = on_quit
+        menu = self._build_menu(self._confirmed(self._logged("Quit", on_quit), confirm),
+                                self._logged("Restart", on_restart), log_path, config_path,
+                                history is not None and history.keep > 0)
+        animated = style != "classic"
+        first = render(style, "loading") if animated else self._images[State.LOADING]
+        self.icon = pystray.Icon("WhisperClaude", first,
+                                 f"WhisperClaude: {self._labels[State.LOADING]}", menu)
+        self._animator = _Animator(self.icon, style, level_fn) if animated else None
+        self._guard_menu()
 
-        def on_quit() -> None: # runs on the tray thread, the menu is closed already
-            if confirm():
-                ask_quit()
-            else:
-                log.info("tray menu: Quit cancelled")
-        menu = pystray.Menu(
+    def _build_menu(self, on_quit: Callable[[], None], on_restart: Callable[[], None],
+                    log_path: Path, config_path: Path, with_history: bool) -> pystray.Menu:
+        return pystray.Menu(
             pystray.MenuItem(lambda item: f"WhisperClaude · {self._status()}", None,
                              enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Recent dictations", pystray.Menu(self._recent_items),
-                             visible=history is not None and history.keep > 0),
+                             visible=with_history),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Settings (config.toml)",
                              lambda icon, item: os.startfile(config_path)),
@@ -209,12 +213,16 @@ class Tray:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit WhisperClaude", lambda icon, item: on_quit()),
         )
-        animated = style != "classic"
-        first = render(style, "loading") if animated else self._images[State.LOADING]
-        self.icon = pystray.Icon("WhisperClaude", first,
-                                 f"WhisperClaude: {self._labels[State.LOADING]}", menu)
-        self._animator = _Animator(self.icon, style, level_fn) if animated else None
-        self._guard_menu()
+
+    @staticmethod
+    def _confirmed(on_quit: Callable[[], None], confirm: Callable[[], bool]) -> Callable[[], None]:
+        def ask_first() -> None: # runs on the tray thread, the menu is closed already
+            if confirm():
+                on_quit()
+            else:
+                log.info("tray menu: Quit cancelled")
+
+        return ask_first
 
     @staticmethod
     def _logged(name: str, action: Callable[[], None]) -> Callable[[], None]:

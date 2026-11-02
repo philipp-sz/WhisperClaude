@@ -116,6 +116,45 @@ def spawn_new_instance() -> None:
                       RESTARTED_FLAG], cwd=CONFIG_PATH.parent, creationflags=flags, close_fds=True)
 
 
+def _load_whisper(events: WakeQueue, m: ModelConfig) -> bool:
+    """Loader thread: Whisper. The outcome arrives as a LOADED / LOAD_FAILED event."""
+    try:
+        from whisperclaude.transcriber import create_transcriber
+
+        t0 = time.perf_counter()
+        transcriber = create_transcriber(
+            device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model,
+            on_status=lambda text: events.put((LOAD_STATUS, text)),
+            language=m.language or None, initial_prompt=m.initial_prompt or None,
+            vocabulary=m.vocabulary, compute_type=m.compute_type, beam_size=m.beam_size,
+            cpu_threads=m.cpu_threads, batch_size=m.batch_size,
+        )
+        log.info("model loaded in %.1f s", time.perf_counter() - t0)
+        events.put((LOADED, transcriber))
+        return True
+    except Exception as e:
+        log.exception("could not load a model")
+        events.put((LOAD_FAILED, str(e)))
+        return False
+
+
+def _load_translator(t: TranslationConfig, translation: Translation) -> None:
+    """Loader thread: the translation model, handed to `translation` directly."""
+    try:
+        from whisperclaude.translator import Translator
+
+        t0 = time.perf_counter()
+        translator = Translator(t.model, t.device, t.cpu_threads, languages=t.my_languages)
+        log.info("translation model %s loaded on %s in %.1f s; own languages %s (%s)",
+                 translator.model_name, translator.device, time.perf_counter() - t0,
+                 ", ".join(translator.detector.preferred),
+                 "config" if t.my_languages else "Windows")
+        translation.set_translator(translator)
+    except Exception as e:
+        log.exception("could not load the translation model")
+        translation.set_failed(f"could not load the translation model: {e}")
+
+
 def start_model_loading(events: WakeQueue, m: ModelConfig, t: TranslationConfig,
                         translation: Translation | None) -> None:
     """Load the model on a thread; the outcome arrives as LOADED / LOAD_FAILED events. Then
@@ -125,41 +164,9 @@ def start_model_loading(events: WakeQueue, m: ModelConfig, t: TranslationConfig,
     unclear pieces of speech Whisper copied them ("Command. Command. Command." instead of what
     was said; reproduced 3/66 with, 0/66 without). Commands still work without them.
     """
-    prompt = m.initial_prompt
-
     def run() -> None:
-        try:
-            from whisperclaude.transcriber import create_transcriber
-
-            t0 = time.perf_counter()
-            transcriber = create_transcriber(
-                device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model,
-                on_status=lambda text: events.put((LOAD_STATUS, text)),
-                language=m.language or None, initial_prompt=prompt or None,
-                vocabulary=m.vocabulary, compute_type=m.compute_type, beam_size=m.beam_size,
-                cpu_threads=m.cpu_threads, batch_size=m.batch_size,
-            )
-            log.info("model loaded in %.1f s", time.perf_counter() - t0)
-            events.put((LOADED, transcriber))
-        except Exception as e:
-            log.exception("could not load a model")
-            events.put((LOAD_FAILED, str(e)))
-            return
-        if translation is None:
-            return
-        try:
-            from whisperclaude.translator import Translator
-
-            t0 = time.perf_counter()
-            translator = Translator(t.model, t.device, t.cpu_threads, languages=t.my_languages)
-            log.info("translation model %s loaded on %s in %.1f s; own languages %s (%s)",
-                     translator.model_name, translator.device, time.perf_counter() - t0,
-                     ", ".join(translator.detector.preferred),
-                     "config" if t.my_languages else "Windows")
-            translation.set_translator(translator)
-        except Exception as e:
-            log.exception("could not load the translation model")
-            translation.set_failed(f"could not load the translation model: {e}")
+        if _load_whisper(events, m) and translation is not None:
+            _load_translator(t, translation)
 
     threading.Thread(target=run, daemon=True, name="model-loader").start()
 
@@ -182,17 +189,17 @@ def tell_already_running() -> None:
             "WhisperClaude", 0x40 | 0x40000) # info icon, topmost
 
 
-def main() -> None:
-    log_path = setup_logging()
-    data_dir = log_path.parent
+def claim_instance(data_dir: Path) -> int | None:
+    """The single-instance mutex and the lifecycle markers. None = don't start: already
+    running, or a revive after a Quit from the tray."""
     revive = REVIVE_FLAG in sys.argv
     if revive and lifecycle.user_quit(data_dir):
         log.info("revive request ignored: the app was quit from the tray")
-        return
+        return None
     mutex = single_instance(wait_s=5 if RESTARTED_FLAG in sys.argv else 0)
     if mutex is None:
         tell_already_running()
-        return
+        return None
     log.info("starting (pid %d, windows session %d, %.1f s after process start%s)",
              os.getpid(), session_id(), time.time() - psutil.Process().create_time(),
              ", revived after wake/unlock" if revive else "")
@@ -201,165 +208,203 @@ def main() -> None:
         log.warning("%s", died)
     lifecycle.clear_user_quit(data_dir) # a normal start (login, Restart, by hand) ends a Quit
     lifecycle.mark_running(data_dir)
+    return mutex
 
-    config_error = ""
+
+def load_config_or_defaults() -> tuple[Config, str]:
+    """config.toml, or the defaults and a message for the pill if it is invalid."""
     try:
-        cfg = load_config()
+        return load_config(), ""
     except ConfigError as e:
         log.error("config error, using defaults: %s", e)
-        cfg, config_error = Config(), "Config error, using defaults (see log)"
+        return Config(), "Config error, using defaults (see log)"
 
-    enable_dpi_awareness()
-    root = tk.Tk()
-    root.report_callback_exception = lambda *exc: log.error("error in Tk callback", exc_info=exc)
-    overlay = Overlay(root, cfg.pill.style)
-    events = WakeQueue()
 
-    def request_quit() -> None: # thread-safe: tray thread, signal handler
-        lifecycle.mark_user_quit(data_dir) # stays quit across wake/unlock until the next login
-        events.put((QUIT, None))
+class Session:
+    """One run of the app: the pill, tray, hotkeys and App, driven by the Tk event loop.
 
-    def request_restart() -> None:
-        events.put((RESTART, None))
+    The UI comes up before the models load (see the module docstring); its methods are the
+    callbacks the other parts call (tray menu, App, model loader, signals).
+    """
 
-    def on_signal(signum: int, _frame: object) -> None:
+    def __init__(self, log_path: Path, mutex: int) -> None:
+        self.log_path, self.data_dir, self.mutex = log_path, log_path.parent, mutex
+        self.cfg, self.config_error = load_config_or_defaults()
+        self.events = WakeQueue()
+        self.stopped = False
+        self.gap = GapDetector()
+        self.last_poll = self.last_beat = time.monotonic()
+        self._build_ui()
+        self._build_app()
+        hk = self.cfg.hotkey
+        self.listener = start_hotkey_listener(
+            self.events, parse_key(hk.key), hk.max_hold_s,
+            parse_key(hk.cancel_key) if hk.cancel_key else None,
+            parse_key(self.cfg.translation.key) if self.translation else None)
+        self.overlay.show_starting("Loading model…")
+        log.info("UI, tray and hotkey up %.1f s after process start; loading the model",
+                 time.time() - psutil.Process().create_time())
+
+    def _build_ui(self) -> None:
+        """The Tk window with the pill, quit signals, the history and the tray icon."""
+        enable_dpi_awareness()
+        self.root = tk.Tk()
+        self.root.report_callback_exception = (
+            lambda *exc: log.error("error in Tk callback", exc_info=exc))
+        self.overlay = Overlay(self.root, self.cfg.pill.style)
+        signal.signal(signal.SIGINT, self._on_signal) # Ctrl+C in the console
+        if hasattr(signal, "SIGBREAK"): # Ctrl+Break; also an external "quit" trigger for tests
+            signal.signal(signal.SIGBREAK, self._on_signal)
+        self.history = History(self.data_dir, self.cfg.history.keep)
+        self.hotkey = key_label(self.cfg.hotkey.key)
+        self.tray = Tray(self.request_quit, self.request_restart, self.log_path, CONFIG_PATH,
+                         self.hotkey, self.history, self.copy_to_clipboard,
+                         style=self.cfg.tray.style, level_fn=lambda: self.overlay.meter.unit)
+        self.tray.start()
+
+    def _build_app(self) -> None:
+        """The translate feature, the recorder and the App (it starts in State.LOADING)."""
+        cfg, self.translation = self.cfg, None
+        if cfg.translation.enabled:
+            self.translation = Translation(LanguagePicker(self.root, LANGUAGES),
+                                           RecentLanguages(self.data_dir / "translate.json"),
+                                           key_label(cfg.translation.key),
+                                           cfg.translation.my_languages)
+        paste = functools.partial(paste_text, restore_delay=cfg.paste.restore_delay_s)
+        self.recorder = Recorder()
+        self.overlay.level_fn = lambda: self.recorder.level
+        cmd = cfg.commands
+        postprocess = ((lambda text: apply_commands(text, cmd.trigger, cmd.bullet))
+                       if cmd.enabled else None)
+        self.app = App(self.recorder, None, paste, self.events, self.on_state, postprocess,
+                       stop_after_silence_s=cfg.recording.stop_after_silence_s,
+                       remember=self.remember, on_pasted=self.on_pasted, on_kept=self.on_kept,
+                       translation=self.translation)
+        self.app.handlers = {
+            LOADED: self.on_loaded,
+            LOAD_FAILED: self.on_load_failed,
+            LOAD_STATUS: lambda text: self.overlay.set_starting_text(str(text)),
+            COPIED: self.on_copied,
+        }
+
+    def run(self) -> None:
+        """Wire the event queue to Tk, start loading the models, run the Tk loop."""
+        # Other threads put events -> generate a Tk virtual event -> pump runs on the Tk thread.
+        self.root.bind(WAKE_EVENT, lambda e: self.pump())
+        self.events.wake = lambda: self.root.event_generate(WAKE_EVENT, when="tail")
+        self.root.after(BACKUP_POLL_MS, self.backup_poll)
+        start_model_loading(self.events, self.cfg.model, self.cfg.translation, self.translation)
+        self.root.mainloop()
+
+    # ---------- callbacks from the tray, App, loader and signals ----------
+
+    def request_quit(self) -> None: # thread-safe: tray thread, signal handler
+        lifecycle.mark_user_quit(self.data_dir) # stays quit across wake/unlock until next login
+        self.events.put((QUIT, None))
+
+    def request_restart(self) -> None:
+        self.events.put((RESTART, None))
+
+    def _on_signal(self, signum: int, _frame: object) -> None:
         log.info("quit requested by signal %s", signal.Signals(signum).name)
-        request_quit()
+        self.request_quit()
 
-    signal.signal(signal.SIGINT, on_signal) # Ctrl+C in the console
-    if hasattr(signal, "SIGBREAK"): # Ctrl+Break; also an external "quit" trigger for tests
-        signal.signal(signal.SIGBREAK, on_signal)
-
-    def copy_to_clipboard(text: str) -> None: # thread-safe: pill (Tk) or tray menu thread
+    def copy_to_clipboard(self, text: str) -> None: # thread-safe: pill (Tk) or tray thread
         try:
             copy_text(text)
             log.info("copied a dictation from the history (%d characters)", len(text))
-            events.put((COPIED, "Copied: paste with Ctrl+V"))
+            self.events.put((COPIED, "Copied: paste with Ctrl+V"))
         except ClipboardError:
             log.warning("copy failed", exc_info=True)
-            events.put((COPIED, "Copy failed: clipboard busy, try again"))
+            self.events.put((COPIED, "Copy failed: clipboard busy, try again"))
 
-    history = History(data_dir, cfg.history.keep)
-    hotkey = key_label(cfg.hotkey.key)
-    tray = Tray(request_quit, request_restart, log_path, CONFIG_PATH, hotkey, history,
-                copy_to_clipboard, style=cfg.tray.style, level_fn=lambda: overlay.meter.unit)
-    tray.start()
+    def on_copied(self, msg: object) -> None:
+        if self.app.state is State.IDLE: # never replace the recording / transcribing pill
+            self.overlay.show_message(str(msg))
 
-    def remember(text: str, translation: str = "", target: str = "", note: str = "",
+    def remember(self, text: str, translation: str = "", target: str = "", note: str = "",
                  update: bool = False) -> None: # worker thread
-        history.add(text, translation, target, note, update)
-        tray.refresh()
+        self.history.add(text, translation, target, note, update)
+        self.tray.refresh()
 
-    def on_state(state: State, msg: str = "") -> None:
-        overlay.set_state(state, msg)
-        tray.set_state(state, msg)
+    def on_state(self, state: State, msg: str = "") -> None:
+        self.overlay.set_state(state, msg)
+        self.tray.set_state(state, msg)
 
-    translation = None
-    if cfg.translation.enabled:
-        translation = Translation(LanguagePicker(root, LANGUAGES),
-                                  RecentLanguages(data_dir / "translate.json"),
-                                  key_label(cfg.translation.key), cfg.translation.my_languages)
-    paste = functools.partial(paste_text, restore_delay=cfg.paste.restore_delay_s)
-    recorder = Recorder()
-    overlay.level_fn = lambda: recorder.level
-    cmd = cfg.commands
-    postprocess = ((lambda text: apply_commands(text, cmd.trigger, cmd.bullet))
-                   if cmd.enabled else None)
-    app = App(recorder, None, paste, events, on_state, postprocess, # starts in State.LOADING
-              stop_after_silence_s=cfg.recording.stop_after_silence_s,
-              remember=remember,
-              on_pasted=lambda text: (overlay.show_pasted(lambda: copy_to_clipboard(text)),
-                                      tray.flash_pasted()),
-              on_kept=lambda text, msg: overlay.show_pasted(lambda: copy_to_clipboard(text),
-                                                            KEPT_S, label=msg),
-              translation=translation)
-    listener = start_hotkey_listener(
-        events, parse_key(cfg.hotkey.key), cfg.hotkey.max_hold_s,
-        parse_key(cfg.hotkey.cancel_key) if cfg.hotkey.cancel_key else None,
-        parse_key(cfg.translation.key) if translation else None)
-    overlay.show_starting("Loading model…")
-    log.info("UI, tray and hotkey up %.1f s after process start; loading the model",
-             time.time() - psutil.Process().create_time())
+    def on_pasted(self, text: str) -> None:
+        self.overlay.show_pasted(lambda: self.copy_to_clipboard(text))
+        self.tray.flash_pasted()
 
-    def on_loaded(transcriber: Transcriber | OpenVinoTranscriber) -> None:
-        app.set_transcriber(transcriber)
+    def on_kept(self, text: str, msg: str) -> None:
+        self.overlay.show_pasted(lambda: self.copy_to_clipboard(text), KEPT_S, label=msg)
+
+    def on_loaded(self, transcriber: Transcriber | OpenVinoTranscriber) -> None:
+        self.app.set_transcriber(transcriber)
         device = transcriber.device # "CUDA", "GPU" / "GPU.1" (OpenVINO, Intel) or "CPU"
-        tray.engine = ("NVIDIA GPU" if device == "CUDA" else
-                       "iGPU" if device.startswith("GPU") else "CPU")
-        tray.set_state(State.IDLE)
-        if config_error:
-            overlay.show_message(config_error, seconds=6)
+        self.tray.engine = ("NVIDIA GPU" if device == "CUDA" else
+                            "iGPU" if device.startswith("GPU") else "CPU")
+        self.tray.set_state(State.IDLE)
+        if self.config_error:
+            self.overlay.show_message(self.config_error, seconds=6)
         else:
-            overlay.show_ready(f"Ready: tap {hotkey}")
+            self.overlay.show_ready(f"Ready: tap {self.hotkey}")
         log.info("ready (%s on %s, hotkey %s)", type(transcriber).__name__, transcriber.device,
-                 cfg.hotkey.key)
+                 self.cfg.hotkey.key)
 
-    def on_load_failed(message: object) -> None:
-        overlay.show_message("Could not load the model (see log)", seconds=None)
-        root.after(5000, lambda: events.put((QUIT, None))) # not a user Quit: may be revived
+    def on_load_failed(self, message: object) -> None:
+        self.overlay.show_message("Could not load the model (see log)", seconds=None)
+        self.root.after(5000, lambda: self.events.put((QUIT, None))) # not a user Quit: may be revived
 
-    app.handlers = {
-        LOADED: on_loaded,
-        LOAD_FAILED: on_load_failed,
-        LOAD_STATUS: lambda text: overlay.set_starting_text(str(text)),
-        # feedback only when idle: never replace the recording / transcribing pill
-        COPIED: lambda msg: overlay.show_message(str(msg)) if app.state is State.IDLE else None,
-    }
+    # ---------- the event loop ----------
 
-    stopped = False
-
-    def pump() -> None:
-        nonlocal stopped
-        if stopped or app.process_pending():
+    def pump(self) -> None:
+        """Handle queued events; on Quit / Restart shut down behind the goodbye animation."""
+        if self.stopped or self.app.process_pending():
             return
-        stopped = True
-        restart = app.exit_reason == RESTART
+        self.stopped = True
+        restart = self.app.exit_reason == RESTART
         log.info("restarting" if restart else "quitting")
-        events.wake = lambda: None
-        listener.stop()
-        tray.stop()
+        self.events.wake = lambda: None
+        self.listener.stop()
+        self.tray.stop()
+        self.overlay.show_goodbye("Restarting…" if restart else "WhisperClaude stopped",
+                                  lambda: self._finish(restart), restart)
 
-        def finish() -> None:
-            lifecycle.mark_clean_exit(data_dir)
-            if restart:
-                release_instance(mutex) # let the new instance take over
-                spawn_new_instance()
-            root.destroy()
+    def _finish(self, restart: bool) -> None:
+        lifecycle.mark_clean_exit(self.data_dir)
+        if restart:
+            release_instance(self.mutex) # let the new instance take over
+            spawn_new_instance()
+        self.root.destroy()
 
-        overlay.show_goodbye("Restarting…" if restart else "WhisperClaude stopped", finish,
-                             restart)
-
-    gap = GapDetector()
-    last_poll = [time.monotonic()]
-    last_beat = [time.monotonic()]
-
-    def backup_poll() -> None:
+    def backup_poll(self) -> None:
+        """Every BACKUP_POLL_MS: stall and resume detection, the heartbeat, a pump."""
         now = time.monotonic()
-        stall, last_poll[0] = now - last_poll[0] - BACKUP_POLL_MS / 1000, now
-        if 2.0 < stall < gap.threshold_s:
+        stall, self.last_poll = now - self.last_poll - BACKUP_POLL_MS / 1000, now
+        if 2.0 < stall < self.gap.threshold_s:
             # The UI thread didn't get to run for a while (e.g. cold-disk DLL loading holds the
             # GIL during the model load at logon): the pill can't animate in that time.
             log.warning("UI thread was blocked for %.1f s", stall)
-        slept = gap.check()
+        slept = self.gap.check()
         if slept:
             # Waking from sleep (session kept alive): Windows may have dropped our keyboard
             # hook and PortAudio's device list may be stale. Both are cheap to renew.
             log.info("resume detected (%.0f s gap): re-arming hotkey, refreshing audio", slept)
-            listener.restart()
-            recorder.refresh_devices()
-        if now - last_beat[0] >= HEARTBEAT_S:
-            last_beat[0] = now
-            lifecycle.heartbeat(data_dir)
-        pump()
-        if not stopped:
-            root.after(BACKUP_POLL_MS, backup_poll)
+            self.listener.restart()
+            self.recorder.refresh_devices()
+        if now - self.last_beat >= HEARTBEAT_S:
+            self.last_beat = now
+            lifecycle.heartbeat(self.data_dir)
+        self.pump()
+        if not self.stopped:
+            self.root.after(BACKUP_POLL_MS, self.backup_poll)
 
-    # Other threads put events -> generate a Tk virtual event -> pump runs on the Tk thread.
-    root.bind(WAKE_EVENT, lambda e: pump())
-    events.wake = lambda: root.event_generate(WAKE_EVENT, when="tail")
-    root.after(BACKUP_POLL_MS, backup_poll)
-    start_model_loading(events, cfg.model, cfg.translation, translation)
-    root.mainloop()
+
+def main() -> None:
+    log_path = setup_logging()
+    mutex = claim_instance(log_path.parent)
+    if mutex is not None:
+        Session(log_path, mutex).run()
 
 
 if __name__ == "__main__":

@@ -199,6 +199,36 @@ def _format_data(name: str) -> bytes | None:
         _GlobalUnlock(handle)
 
 
+def _copy_selection(timeout: float) -> bool:
+    """Send Ctrl+Insert. True once the clipboard changed, False after `timeout` without."""
+    sequence = _GetClipboardSequenceNumber()
+    wait_for_modifiers_released()
+    kb = Controller()
+    with kb.pressed(Key.ctrl):
+        kb.tap(Key.insert)
+    deadline = time.monotonic() + timeout
+    while _GetClipboardSequenceNumber() == sequence:
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.01)
+    time.sleep(0.05) # apps may add more formats right after the first one
+    return True
+
+
+def _read_copied() -> tuple[str | None, bytes]:
+    """The clipboard's text, and VS Code's data (it marks a copy without a selection)."""
+    with _opened():
+        handle = _GetClipboardData(CF_UNICODETEXT)
+        ptr = _GlobalLock(handle) if handle else None
+        text = None
+        if ptr:
+            try:
+                text = ctypes.wstring_at(ptr)
+            finally:
+                _GlobalUnlock(handle)
+        return text, _format_data("vscode-editor-data") or b""
+
+
 def capture_selection(timeout: float = 0.6) -> str | None:
     """The text selected in the focused app, or None if nothing is selected.
 
@@ -213,27 +243,9 @@ def capture_selection(timeout: float = 0.6) -> str | None:
     except ClipboardError:
         log.warning("could not read the clipboard; it won't be restored", exc_info=True)
         saved = None
-    sequence = _GetClipboardSequenceNumber()
-    wait_for_modifiers_released()
-    kb = Controller()
-    with kb.pressed(Key.ctrl):
-        kb.tap(Key.insert)
-    deadline = time.monotonic() + timeout
-    while _GetClipboardSequenceNumber() == sequence:
-        if time.monotonic() > deadline:
-            return None # nothing copied, the clipboard is untouched
-        time.sleep(0.01)
-    time.sleep(0.05) # apps may add more formats right after the first one
-    with _opened():
-        handle = _GetClipboardData(CF_UNICODETEXT)
-        ptr = _GlobalLock(handle) if handle else None
-        text = None
-        if ptr:
-            try:
-                text = ctypes.wstring_at(ptr)
-            finally:
-                _GlobalUnlock(handle)
-        vscode = _format_data("vscode-editor-data") or b""
+    if not _copy_selection(timeout):
+        return None # nothing copied, the clipboard is untouched
+    text, vscode = _read_copied()
     if saved is not None:
         try:
             restore_clipboard(saved)

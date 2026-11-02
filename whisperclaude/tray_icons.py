@@ -89,6 +89,63 @@ def _bars(d: ImageDraw.ImageDraw, heights: list[float], color: tuple[int, int, i
                             fill=color)
 
 
+def _draw_pulse(d: ImageDraw.ImageDraw, state: str, color: tuple[int, int, int], t: float,
+                level: float) -> None:
+    if state == "recording": # the circle glows brighter with the voice
+        _disc(d, _lighter(color, 0.45 * level))
+        _mic(d)
+    elif state == "transcribing": # a white arc runs around the rim
+        _disc(d, color)
+        _spinner(d, t, r=29, width=4)
+        _mic(d, scale=0.8)
+    elif state == "loading":
+        _disc(d, color, a=0.55 + 0.45 * (0.5 + 0.5 * math.sin(t * PI)))
+        _mic(d)
+    else: # pasted
+        _disc(d, color)
+        _check(d, min(1.0, t / 0.25))
+
+
+def _draw_bars(d: ImageDraw.ImageDraw, state: str, color: tuple[int, int, int], t: float,
+               level: float) -> None:
+    _disc(d, color)
+    if state == "recording":
+        # middle bars react most, like a voice meter; a little idle wobble keeps it alive
+        wob = [0.5 + 0.5 * math.sin(t * 3 * PI + i * 1.7) for i in range(4)]
+        weights = (0.55, 1.0, 0.85, 0.5)
+        _bars(d, [0.12 * wob[i] + level * weights[i] for i in range(4)])
+    elif state == "transcribing":
+        _bars(d, [0.15 + 0.6 * (0.5 + 0.5 * math.sin(t * 2 * PI - i * 0.9)) ** 2
+                  for i in range(4)])
+    elif state == "loading":
+        _disc(d, color, a=0.55 + 0.45 * (0.5 + 0.5 * math.sin(t * PI)))
+        _mic(d)
+    else:
+        _check(d, min(1.0, t / 0.25))
+
+
+def _draw_ring(d: ImageDraw.ImageDraw, state: str, color: tuple[int, int, int], t: float,
+               level: float) -> None:
+    _disc(d, DARK, r=30)
+    ring = (_p(2), _p(2), _p(62), _p(62))
+    if state == "idle":
+        d.ellipse(ring, outline=color, width=_p(6))
+        _mic(d, scale=0.85)
+    elif state == "recording": # the ring gets thicker with the voice
+        d.ellipse(ring, outline=color, width=_p(5 + 6 * level))
+        _mic(d, color=color, scale=0.85)
+    elif state in ("transcribing", "loading"):
+        d.ellipse(ring, outline=_alpha(color, 0.3), width=_p(6))
+        _spinner(d, t, color=color, r=30, width=6, speed=1.0 if state == "transcribing" else 0.5)
+        _mic(d, scale=0.85)
+    else:
+        d.ellipse(ring, outline=color, width=_p(6))
+        _check(d, min(1.0, t / 0.25))
+
+
+_DRAW = {"pulse": _draw_pulse, "bars": _draw_bars, "ring": _draw_ring}
+
+
 def render(style: str, state: str, t: float = 0.0, level: float = 0.0) -> Image.Image:
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -96,50 +153,6 @@ def render(style: str, state: str, t: float = 0.0, level: float = 0.0) -> Image.
     if style == "classic" or (state == "idle" and style != "ring"):
         _disc(d, color)
         _mic(d)
-    elif style == "pulse":
-        if state == "recording": # the circle glows brighter with the voice
-            _disc(d, _lighter(color, 0.45 * level))
-            _mic(d)
-        elif state == "transcribing": # a white arc runs around the rim
-            _disc(d, color)
-            _spinner(d, t, r=29, width=4)
-            _mic(d, scale=0.8)
-        elif state == "loading":
-            _disc(d, color, a=0.55 + 0.45 * (0.5 + 0.5 * math.sin(t * PI)))
-            _mic(d)
-        else: # pasted
-            _disc(d, color)
-            _check(d, min(1.0, t / 0.25))
-    elif style == "bars":
-        _disc(d, color)
-        if state == "recording":
-            # middle bars react most, like a voice meter; a little idle wobble keeps it alive
-            wob = [0.5 + 0.5 * math.sin(t * 3 * PI + i * 1.7) for i in range(4)]
-            weights = (0.55, 1.0, 0.85, 0.5)
-            _bars(d, [0.12 * wob[i] + level * weights[i] for i in range(4)])
-        elif state == "transcribing":
-            _bars(d, [0.15 + 0.6 * (0.5 + 0.5 * math.sin(t * 2 * PI - i * 0.9)) ** 2
-                      for i in range(4)])
-        elif state == "loading":
-            _disc(d, color, a=0.55 + 0.45 * (0.5 + 0.5 * math.sin(t * PI)))
-            _mic(d)
-        else:
-            _check(d, min(1.0, t / 0.25))
-    elif style == "ring":
-        _disc(d, DARK, r=30)
-        ring = (_p(2), _p(2), _p(62), _p(62))
-        if state == "idle":
-            d.ellipse(ring, outline=color, width=_p(6))
-            _mic(d, scale=0.85)
-        elif state == "recording": # the ring gets thicker with the voice
-            d.ellipse(ring, outline=color, width=_p(5 + 6 * level))
-            _mic(d, color=color, scale=0.85)
-        elif state in ("transcribing", "loading"):
-            d.ellipse(ring, outline=_alpha(color, 0.3), width=_p(6))
-            _spinner(d, t, color=color, r=30, width=6,
-                     speed=1.0 if state == "transcribing" else 0.5)
-            _mic(d, scale=0.85)
-        else:
-            d.ellipse(ring, outline=color, width=_p(6))
-            _check(d, min(1.0, t / 0.25))
+    else:
+        _DRAW[style](d, state, color, t, level)
     return img.resize((SIZE, SIZE), Image.LANCZOS)

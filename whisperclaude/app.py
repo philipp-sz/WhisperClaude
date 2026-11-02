@@ -229,6 +229,7 @@ class App:
         self._rec_started = 0.0
         self._live: _LiveRun | None = None
         self._job: _TranslateJob | None = None # translation waiting for the picker
+        self._own_events = self._event_table()
 
     def set_transcriber(self, transcriber: TranscriberLike) -> None:
         """Model is ready. Doesn't call on_state: the caller shows its own "ready" animation."""
@@ -241,51 +242,66 @@ class App:
 
     def handle(self, kind: str, payload: object = None) -> None:
         """Process one event."""
-        if kind == TOGGLE:
-            if self.state is State.IDLE:
-                self._start_recording()
-            elif self.state is State.RECORDING:
-                self._stop_recording()
-            elif self.state is State.LOADING:
-                log.info("toggle ignored: model still loading")
-                self.on_state(State.LOADING, "Still loading, one moment…")
-            else:
-                log.info("toggle ignored while transcribing")
-        elif kind == TRANSLATE:
-            self._on_translate_key()
-        elif kind == PICK:
-            self._show_picker(payload)
-        elif kind == UNPICK:
-            if payload is self._job and self._job.shown:
-                self.translation.close_pick()
-        elif kind == GUESS:
-            job, codes = payload
-            if job is self._job and job.shown and not job.picked.is_set():
-                self.translation.set_guess(codes)
-        elif kind == TRANSLATING:
-            self._set(State.TRANSLATING)
-        elif kind == CANCEL:
-            if self.state is State.RECORDING:
-                log.info("recording cancelled")
-                self._stop_recording(cancelled=True)
-        elif kind == AUTO_STOP:
-            if self.state is State.RECORDING: # not if a tap stopped it in the meantime
-                self._stop_recording(auto=True)
-        elif kind == DONE:
-            self._set(State.IDLE, str(payload or ""))
-        elif kind == PASTED:
-            self._set(State.IDLE)
-            if self.on_pasted is not None:
-                self.on_pasted(str(payload))
-        elif kind == KEPT:
-            text, msg = payload
-            self._set(State.IDLE, "" if self.on_kept else msg)
-            if self.on_kept is not None:
-                self.on_kept(text, msg)
-        elif kind == ERROR:
-            self._set(State.IDLE, f"Error: {payload}")
-        elif kind in self.handlers:
-            self.handlers[kind](payload)
+        handler = self._own_events.get(kind) or self.handlers.get(kind)
+        if handler is not None:
+            handler(payload)
+
+    def _event_table(self) -> dict[str, Callable[[object], None]]:
+        """The App's own event kinds -> handler(payload); `handlers` adds the caller's."""
+        return {
+            TOGGLE: self._on_toggle,
+            TRANSLATE: lambda _payload: self._on_translate_key(),
+            PICK: self._show_picker,
+            UNPICK: self._on_unpick,
+            GUESS: self._on_guess,
+            TRANSLATING: lambda _payload: self._set(State.TRANSLATING),
+            CANCEL: self._on_cancel,
+            AUTO_STOP: self._on_auto_stop,
+            DONE: lambda payload: self._set(State.IDLE, str(payload or "")),
+            PASTED: self._on_pasted_event,
+            KEPT: self._on_kept_event,
+            ERROR: lambda payload: self._set(State.IDLE, f"Error: {payload}"),
+        }
+
+    def _on_toggle(self, _payload: object) -> None:
+        if self.state is State.IDLE:
+            self._start_recording()
+        elif self.state is State.RECORDING:
+            self._stop_recording()
+        elif self.state is State.LOADING:
+            log.info("toggle ignored: model still loading")
+            self.on_state(State.LOADING, "Still loading, one moment…")
+        else:
+            log.info("toggle ignored while transcribing")
+
+    def _on_unpick(self, job: object) -> None:
+        if job is self._job and self._job.shown:
+            self.translation.close_pick()
+
+    def _on_guess(self, payload: object) -> None:
+        job, codes = payload
+        if job is self._job and job.shown and not job.picked.is_set():
+            self.translation.set_guess(codes)
+
+    def _on_cancel(self, _payload: object) -> None:
+        if self.state is State.RECORDING:
+            log.info("recording cancelled")
+            self._stop_recording(cancelled=True)
+
+    def _on_auto_stop(self, _payload: object) -> None:
+        if self.state is State.RECORDING: # not if a tap stopped it in the meantime
+            self._stop_recording(auto=True)
+
+    def _on_pasted_event(self, text: object) -> None:
+        self._set(State.IDLE)
+        if self.on_pasted is not None:
+            self.on_pasted(str(text))
+
+    def _on_kept_event(self, payload: object) -> None:
+        text, msg = payload
+        self._set(State.IDLE, "" if self.on_kept else msg)
+        if self.on_kept is not None:
+            self.on_kept(text, msg)
 
     def _on_translate_key(self) -> None:
         if self.translation is None:
@@ -445,17 +461,8 @@ class App:
         """Worker thread: transcribe and paste (or keep, see App). Pasting here (not on the
         Tk thread) keeps the main loop free, so the hotkey thread never waits on it. State
         stays TRANSCRIBING until pasted, so toggles can't interfere."""
-        try:
-            t0 = time.perf_counter()
-            text = live.finish(audio) if live else self.transcriber.transcribe(audio)
-            early = getattr(live.live, "done_s", 0.0) if live else 0.0
-            log.info("transcribed %.1f s audio in %.2f s after the stop (%.0f s while recording)",
-                     len(audio) / SAMPLE_RATE, time.perf_counter() - t0, early)
-        except Exception as e:
-            log.exception("transcription failed")
-            if job is not None:
-                self.events.put((UNPICK, job))
-            self.events.put((ERROR, str(e)))
+        text = self._run_transcriber(audio, live, job)
+        if text is None:
             return
         stopped = f"Stopped after {self.stop_after_silence_s:.0f} s of silence"
         if not text:
@@ -464,11 +471,7 @@ class App:
             self.events.put((DONE, "Cancelled" if cancelled else
                              stopped if auto else "Nothing recognized"))
             return
-        if self.postprocess is not None:
-            try: # judged on the raw text above: dictating only "command new line" is valid
-                text = self.postprocess(text)
-            except Exception:
-                log.exception("postprocessing failed, pasting the raw transcript")
+        text = self._postprocessed(text)
         if cancelled:
             self._keep(text, "Cancelled", "cancelled")
         elif job is not None:
@@ -477,6 +480,35 @@ class App:
             self._keep(text, stopped, NOT_PASTED)
         else:
             self._paste(text)
+
+    def _run_transcriber(self, audio: np.ndarray, live: _LiveRun | None,
+                         job: _TranslateJob | None) -> str | None:
+        """Worker thread: the transcript ("" = nothing recognized). None = it failed; the
+        error is reported and the picker closed."""
+        try:
+            t0 = time.perf_counter()
+            text = live.finish(audio) if live else self.transcriber.transcribe(audio)
+            early = getattr(live.live, "done_s", 0.0) if live else 0.0
+            log.info("transcribed %.1f s audio in %.2f s after the stop (%.0f s while recording)",
+                     len(audio) / SAMPLE_RATE, time.perf_counter() - t0, early)
+            return text or ""
+        except Exception as e:
+            log.exception("transcription failed")
+            if job is not None:
+                self.events.put((UNPICK, job))
+            self.events.put((ERROR, str(e)))
+            return None
+
+    def _postprocessed(self, text: str) -> str:
+        """Spoken commands, if on. Judged on the raw text before: dictating only "command new
+        line" is valid."""
+        if self.postprocess is None:
+            return text
+        try:
+            return self.postprocess(text)
+        except Exception:
+            log.exception("postprocessing failed, pasting the raw transcript")
+            return text
 
     def _translate_dictation(self, text: str, job: _TranslateJob) -> None:
         """Worker thread: wait for the picker, then translate and paste the dictation."""
