@@ -20,14 +20,14 @@ Test: 200 sentences of FLORES-200 devtest in each of 12 directions (German, Engl
 |---|---|---|---|---|---|---|
 | M2M100-418M, beam 4 | 0.5 GB | 81.7 / 49.4 | 85.7 | 0.84 s | | 0.52 GB |
 | NLLB-200-distilled-600M, beam 1 | 0.6 GB | 84.5 / 51.5 | 88.8 | 0.72 s | | 0.66 GB |
-| NLLB-200-distilled-600M, beam 2 (CPU default) | 0.6 GB | 85.2 / 52.4 | 89.0 | 0.77–0.88 s | 0.19 s | 0.66 GB |
+| NLLB-200-distilled-600M, beam 2 (little memory) | 0.6 GB | 85.2 / 52.4 | 89.0 | 0.77–0.88 s | 0.19 s | 0.66 GB |
 | NLLB-200-distilled-600M, beam 4 | 0.6 GB | 85.5 / 52.7 | 88.6 | 1.20 s | | 0.66 GB |
-| NLLB-200-distilled-1.3B, beam 2 (CUDA default) | 1.4 GB | 86.7 / 54.5 | 90.0 | 1.78 s | 0.35 s | 1.44 GB |
+| NLLB-200-distilled-1.3B, beam 2 (default) | 1.4 GB | 86.7 / 54.5 | 90.0 | 1.78 s | 0.35 s | 1.44 GB |
 | NLLB-200-distilled-1.3B, beam 4 | 1.4 GB | 86.8 / 54.8 | 89.8 | 2.87 s | | 1.44 GB |
 | NLLB-600M, beam 2, repetition penalty 1.1 | | 85.2 / 51.8 | 88.4 | | | |
 | NLLB-600M, beam 2, wrong source language tag | | 78.3 / 45.9 | 78.2 | | | |
 
-`[translation] model = "auto"` uses NLLB-1.3B on an NVIDIA GPU, where it is fast, and NLLB-600M on the CPU, where the 1.3B model takes twice as long for about 1 COMET point. Beam 2 scores like beam 4 at lower cost. The repetition penalty made no gain and was dropped. A wrong source language costs 7–11 COMET points, so the source language is detected per sentence (below). M2M100-1.2B was not tested: it is larger than NLLB-600M and scored below it in the NLLB paper.
+`[translation] model = "auto"` uses NLLB-1.3B, for about 1 COMET point more than NLLB-600M, unless memory is short: with less than 2 GB of free VRAM on an NVIDIA GPU (after Whisper), or with less than 12 GiB of RAM on the CPU (`translator.auto_model`; a 16 GB PC reports about 15.5 GiB, an 8 GB one about 7.5 GiB). On the desktop CPU the 1.3B model takes 2.3 times as long as the 600M (1.78 s against 0.77 s for 3 sentences), on the laptop 1.5 times (0.6 s against 0.4 s). Either one can be set in `config.toml`. Beam 2 scores like beam 4 at lower cost. The repetition penalty made no gain and was dropped. A wrong source language costs 7–11 COMET points, so the source language is detected per sentence (below). M2M100-1.2B was not tested: it is larger than NLLB-600M and scored below it in the NLLB paper.
 
 - NLLB-600M scored higher than M2M100-418M in every direction (chrF++), at a similar size and speed.
 - Typical errors: NLLB-600M sometimes drops a clause ("Kein Stress, das hat Zeit bis Freitag." became "Don't worry. It's Friday."). M2M100 translates word by word ("we want to go on a walk?"). All three turned "halb acht" (7:30) into 8:30.

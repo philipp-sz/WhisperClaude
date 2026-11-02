@@ -22,8 +22,9 @@ MODELS = { # config name -> pre-converted CTranslate2 model (int8) on Hugging Fa
     "nllb-600m": "JustFrederik/nllb-200-distilled-600M-ct2-int8",
     "nllb-1.3b": "OpenNMT/nllb-200-distilled-1.3B-ct2-int8",
 }
-AUTO_MODEL = {"cuda": "nllb-1.3b", "cpu": "nllb-600m"} # see docs/translation.md
 LOW_VRAM_MB = 2048 # "auto" on CUDA with less free VRAM (after Whisper): the smaller model
+MIN_RAM_GB = 12 # "auto" on the CPU with less RAM: the smaller model. A "16 GB" PC reports about
+# 15.5 GiB (the rest is reserved), an "8 GB" one about 7.5 GiB. See docs/translation.md
 MIN_DETECT_CHARS = 25 # shorter sentences take the language of the whole text
 MIN_CONFIDENCE = 0.9
 
@@ -164,14 +165,35 @@ def source_languages(sentences: list[str], detect: Callable[[str], tuple[str, fl
     return codes
 
 
+def total_ram_gb() -> float | None:
+    """Installed RAM in GiB (what Windows makes usable); None if unknown."""
+    try:
+        import psutil
+        return psutil.virtual_memory().total / 2**30
+    except Exception:
+        log.info("could not read the RAM size", exc_info=True)
+        return None
+
+
+def auto_model(device: str, free_vram_mb: int | None, ram_gb: float | None) -> str:
+    """The model for `model = "auto"`: nllb-1.3b (1.4 GB, better) unless memory is short. On
+    CUDA that is less than LOW_VRAM_MB free after Whisper (unknown VRAM: still the large
+    one); on the CPU less than MIN_RAM_GB of RAM (unknown RAM: the small one)."""
+    if device == "cuda":
+        small = free_vram_mb is not None and free_vram_mb < LOW_VRAM_MB
+    else:
+        small = ram_gb is None or ram_gb < MIN_RAM_GB
+    return "nllb-600m" if small else "nllb-1.3b"
+
+
 class Translator:
     """NLLB-200 on CTranslate2. translate() is not thread-safe (one worker thread uses it)."""
 
     def __init__(self, model: str = "auto", device: str = "auto", cpu_threads: int = 4,
                  beam_size: int = 2, on_status: Callable[[str], None] = lambda s: None,
                  languages: tuple[str, ...] = ()) -> None:
-        """model "auto": the larger NLLB on an NVIDIA GPU, the smaller one on the CPU.
-        languages: the user's own languages (ISO codes, most used first); () = Windows'."""
+        """model "auto": by memory, see auto_model. languages: the user's own languages (ISO
+        codes, most used first); () = Windows'."""
         import ctranslate2
         from huggingface_hub import snapshot_download
         from tokenizers import Tokenizer
@@ -183,12 +205,11 @@ class Translator:
                 self.device = "cuda"
             elif device == "cuda":
                 log.warning("no usable NVIDIA GPU for the translation, using the CPU")
-        self.model_name = AUTO_MODEL[self.device] if model == "auto" else model
-        if model == "auto" and self.device == "cuda":
+        if model == "auto":
             from whisperclaude.transcriber import free_vram_mb
-            free = free_vram_mb()
-            if free is not None and free < LOW_VRAM_MB:
-                self.model_name = AUTO_MODEL["cpu"]
+            model = auto_model(self.device, free_vram_mb() if self.device == "cuda" else None,
+                               total_ram_gb())
+        self.model_name = model
         repo = MODELS.get(self.model_name, self.model_name)
         try: # cached: no network request at startup
             path = snapshot_download(repo, local_files_only=True)

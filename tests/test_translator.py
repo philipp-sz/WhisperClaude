@@ -3,7 +3,21 @@ import pytest
 
 from whisperclaude.languages import BY_CODE, COMMON, LANGUAGES, NLLB_CODES, SOURCE_CODES, search
 from whisperclaude.translation import RecentLanguages
-from whisperclaude.translator import segment, source_languages, split_sentences, tidy
+from whisperclaude.translator import auto_model, segment, source_languages, split_sentences, tidy
+
+
+@pytest.mark.parametrize("device, free_vram_mb, ram_gb, expected", [
+    ("cuda", 8000, 16, "nllb-1.3b"),
+    ("cuda", 2048, 8, "nllb-1.3b"), # CUDA looks at VRAM only
+    ("cuda", 1500, 64, "nllb-600m"),
+    ("cuda", None, 16, "nllb-1.3b"), # unknown VRAM: the desktop default
+    ("cpu", None, 31.5, "nllb-1.3b"),
+    ("cpu", None, 15.5, "nllb-1.3b"), # a "16 GB" PC
+    ("cpu", None, 7.5, "nllb-600m"), # an "8 GB" PC
+    ("cpu", None, None, "nllb-600m"), # unknown RAM: the small one
+])
+def test_auto_model_follows_the_memory(device, free_vram_mb, ram_gb, expected):
+    assert auto_model(device, free_vram_mb, ram_gb) == expected
 
 
 @pytest.mark.parametrize("text, expected", [

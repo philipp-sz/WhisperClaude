@@ -132,7 +132,7 @@ class CommandsConfig:
 class TranslationConfig:
     enabled: bool = True
     key: str = "alt_l" # tap alone: translate the selected text, or the dictation
-    model: str = "auto" # NVIDIA GPU: nllb-1.3b, CPU: nllb-600m (docs/translation.md)
+    model: str = "auto" # nllb-1.3b, or nllb-600m on little memory (translator.auto_model)
     device: str = "auto" # "auto" = NVIDIA GPU if available, else CPU | "cuda" | "cpu"
     cpu_threads: int = 4
     my_languages: tuple[str, ...] = () # languages the user writes in; () = ask Windows

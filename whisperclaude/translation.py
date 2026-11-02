@@ -18,7 +18,7 @@ if TYPE_CHECKING:  # heavy: loaded by the model loader, not on the UI path
 
 log = logging.getLogger(__name__)
 KEEP_RECENT = 5
-LOAD_TIMEOUT_S = 30 # loading takes 2-5 s; the first start downloads ~0.6 GB first
+LOAD_TIMEOUT_S = 30 # loading takes 2-6 s; the first start downloads 0.6-1.4 GB first
 
 
 class RecentLanguages:

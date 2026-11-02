@@ -63,7 +63,8 @@ style = "wave"
 enabled = true
 key = "alt_l"         # "alt_l", "alt_r", "f8", ... (must differ from [hotkey] key)
 model = "auto"        # NLLB-200: "nllb-600m" (0.6 GB, faster) or "nllb-1.3b" (1.4 GB, better);
-                      # "auto" = nllb-1.3b on an NVIDIA GPU, nllb-600m on the CPU
+                      # "auto" = nllb-1.3b, but nllb-600m with less than 12 GB of RAM (CPU) or
+                      # less than 2 GB of free VRAM (NVIDIA GPU)
 device = "auto"       # "auto" = NVIDIA GPU if available, else CPU | "cuda" | "cpu"
 cpu_threads = 4
 # The languages you write in, most used first (ISO codes: "de", "en", "es", "fr", "pl", ...).
