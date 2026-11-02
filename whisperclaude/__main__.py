@@ -246,7 +246,9 @@ def main() -> None:
 
     def on_loaded(transcriber) -> None:
         app.set_transcriber(transcriber)
-        tray.engine = "iGPU" if transcriber.device == "GPU" else "CPU"
+        device = transcriber.device  # "CUDA", "GPU" / "GPU.1" (OpenVINO, Intel) or "CPU"
+        tray.engine = ("NVIDIA GPU" if device == "CUDA" else
+                       "iGPU" if device.startswith("GPU") else "CPU")
         tray.set_state(State.IDLE)
         if config_error:
             overlay.show_message(config_error, seconds=6)

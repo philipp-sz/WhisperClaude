@@ -1,7 +1,7 @@
 """Speech-to-text backends: load the model once, transcribe 16 kHz mono float32 audio.
 
 - OpenVinoTranscriber: Whisper on the Intel iGPU via OpenVINO GenAI (~10x faster, ~half the
-  energy per dictation, and fast enough for large-v3-turbo; see docs/decisions.md).
+  energy per dictation, and fast enough for large-v3-turbo; see docs/transcription.md).
 - Transcriber: faster-whisper on the CPU (fallback when there's no usable GPU).
 create_transcriber() picks one based on the hardware.
 """
@@ -153,7 +153,7 @@ class LiveTranscription:
 class Transcriber:
     """faster-whisper on the CPU.
 
-    Defaults come from the benchmarks in docs/decisions.md: small, greedy decoding, 4 threads
+    Defaults come from the benchmarks in docs/transcription.md: small, greedy decoding, 4 threads
     (8 was slower for small on the P/E-core CPU).
     """
 
@@ -227,14 +227,27 @@ def ov_repo(model: str) -> str:
     return f"OpenVINO/whisper-{model}-int8-ov"
 
 
-def gpu_available() -> bool:
-    """True if OpenVINO is installed and sees a GPU (e.g. the Intel iGPU)."""
+def intel_gpu() -> str | None:
+    """OpenVINO's name for an Intel GPU ("GPU", or "GPU.1" next to another GPU), or None.
+
+    OpenVINO also lists NVIDIA cards as "GPU" (through OpenCL; seen with an RTX 4070), but its
+    GPU plugin is made for Intel GPUs, so only devices named Intel count.
+    """
     try:
         import openvino as ov
-        return "GPU" in ov.Core().available_devices
+        core = ov.Core()
+        for device in core.available_devices:
+            if (device.startswith("GPU")
+                    and "intel" in str(core.get_property(device, "FULL_DEVICE_NAME")).lower()):
+                return device
     except Exception:  # not installed, driver problem, ...
         log.info("OpenVINO GPU check failed", exc_info=True)
-        return False
+    return None
+
+
+def gpu_available() -> bool:
+    """True if OpenVINO is installed and sees an Intel GPU (e.g. the iGPU)."""
+    return intel_gpu() is not None
 
 
 class OpenVinoTranscriber:
@@ -310,26 +323,183 @@ class OpenVinoTranscriber:
         return LiveTranscription(self.transcribe_chunks, self._detect)
 
 
+def load_cuda_libraries() -> bool:
+    """Load cuBLAS and cuDNN from the pip packages of the [cuda] extra (nvidia-cublas-cu12,
+    nvidia-cudnn-cu12). CTranslate2 loads them by name only when the GPU is first used, and
+    Windows doesn't search the packages' folders: a DLL that is already loaded is found.
+    Returns False if they aren't installed."""
+    import ctypes
+    import importlib.util
+
+    loaded = False
+    for package in ("nvidia.cublas", "nvidia.cudnn"):
+        try:
+            spec = importlib.util.find_spec(package)
+        except ModuleNotFoundError:
+            spec = None
+        for folder in (spec.submodule_search_locations or []) if spec else []:
+            for dll in sorted(Path(folder, "bin").glob("*.dll")):
+                ctypes.WinDLL(str(dll))
+                loaded = True
+    return loaded
+
+
+CUDA_BEAM = 5  # beam_size 0 (auto) on CUDA: fewer errors in all four test sets, +5 % time
+LOW_VRAM_MB = 4096  # less free VRAM: int8 weights (turbo: half the memory, same accuracy)
+LARGE_VRAM_MB = 7000  # model "auto" with this much free: large-v3 (3.9 GB) + room for NLLB
+GPU_MODEL = "large-v3-turbo"  # model "auto" otherwise, and always on the iGPU
+
+
+def free_vram_mb() -> int | None:
+    """Free memory of the first NVIDIA GPU in MB, from NVML (installed with the driver);
+    None if unknown."""
+    import ctypes
+
+    class Memory(ctypes.Structure):
+        _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong),
+                    ("used", ctypes.c_ulonglong)]
+
+    try:
+        nvml = ctypes.WinDLL("nvml.dll")
+        if nvml.nvmlInit_v2() != 0:
+            return None
+        try:
+            handle, memory = ctypes.c_void_p(), Memory()
+            if (nvml.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(handle)) != 0
+                    or nvml.nvmlDeviceGetMemoryInfo(handle, ctypes.byref(memory)) != 0):
+                return None
+            return memory.free // 2**20
+        finally:
+            nvml.nvmlShutdown()
+    except (OSError, AttributeError):
+        return None
+
+
+def cuda_compute_type(free_mb: int | None) -> str:
+    """float16, or int8 weights if the GPU has little free memory. On FLEURS (German and
+    English, clean and noisy) float32, float16 and int8 were equally accurate; int8 needs
+    1.0 GB instead of 2.2 GB (see docs/transcription.md)."""
+    return "int8_float16" if free_mb is not None and free_mb < LOW_VRAM_MB else "float16"
+
+
+def cuda_choice(model: str, free_mb: int | None) -> tuple[str, str]:
+    """(model, compute type) on CUDA, by free VRAM. model "auto":
+    - LARGE_VRAM_MB free: large-v3 float16 (3.9 GB; 11-19 % fewer errors than large-v3-turbo
+      on FLEURS, clean and noisy; 0.66 s per 10 s on an RTX 4070),
+    - LOW_VRAM_MB free: large-v3 int8 (2.1 GB, as much as the turbo in float16, and still
+      fewer errors than it),
+    - less: large-v3-turbo int8 (1.0 GB). Unknown VRAM: large-v3-turbo float16.
+    A model set in config.toml stays; only its precision follows the VRAM."""
+    if model != "auto":
+        return model, cuda_compute_type(free_mb)
+    if free_mb is None:
+        return GPU_MODEL, "float16"
+    if free_mb >= LARGE_VRAM_MB:
+        return "large-v3", "float16"
+    return ("large-v3" if free_mb >= LOW_VRAM_MB else GPU_MODEL), "int8_float16"
+
+
+def cuda_available() -> bool:
+    """True if there is an NVIDIA GPU and the CUDA libraries of the [cuda] extra are installed."""
+    try:
+        import ctranslate2
+        return ctranslate2.get_cuda_device_count() > 0 and load_cuda_libraries()
+    except Exception:
+        log.info("CUDA check failed", exc_info=True)
+        return False
+
+
+class CudaTranscriber(OpenVinoTranscriber):
+    """faster-whisper on an NVIDIA GPU (CUDA; model and precision by free VRAM, see
+    cuda_choice). Same chunking and prompt as the iGPU path: chunks split by language, one
+    model call per chunk, so each chunk gets its own language (the batched CPU pipeline
+    detects one language for all chunks)."""
+
+    device = "CUDA"
+
+    def __init__(
+        self,
+        model: str = "auto",
+        language: str | None = None,
+        initial_prompt: str | None = DEFAULT_PROMPT,
+        vocabulary: Sequence[str] = (),
+        on_status: Callable[[str], None] = lambda s: None,
+        compute_type: str = "auto",
+        beam_size: int = 0,
+    ) -> None:
+        """model / compute_type "auto": by free VRAM (cuda_choice); beam_size 0: CUDA_BEAM."""
+        load_cuda_libraries()
+        self.language = language
+        self.initial_prompt = build_prompt(initial_prompt, vocabulary)
+        self.beam_size = beam_size or CUDA_BEAM
+        free = free_vram_mb()
+        model, auto_compute = cuda_choice(model, free)
+        if compute_type == "auto":
+            compute_type = auto_compute
+        log.info("CUDA: %s, %s, beam %d (%s MB VRAM free)", model, compute_type, self.beam_size,
+                 free if free is not None else "?")
+        self.model_name, self.compute_type = model, compute_type
+        kwargs = dict(device="cuda", compute_type=compute_type)
+        try:  # cached model: no network request at startup
+            self.model = WhisperModel(model, local_files_only=True, **kwargs)
+        except Exception:
+            on_status("Downloading model (one-time)…")
+            self.model = WhisperModel(model, **kwargs)
+        silence = np.zeros(SAMPLE_RATE, np.float32)  # CUDA setup + VAD load, see OpenVINO
+        speech_chunks(silence)
+        self._generate([silence])
+
+    def _generate(self, chunks: list[np.ndarray]) -> tuple[str, str]:
+        texts, language = [], ""
+        for chunk in chunks:
+            segments, info = self.model.transcribe(
+                chunk, language=self.language, beam_size=self.beam_size,
+                initial_prompt=self.initial_prompt, without_timestamps=True,
+                condition_on_previous_text=False)
+            texts.append(join_chunks(s.text for s in segments))
+            language = language or info.language
+        return join_chunks(texts), language
+
+    def detect_language(self, audio: np.ndarray) -> str:
+        return self.model.detect_language(np.asarray(audio, dtype=np.float32))[0]
+
+
 def create_transcriber(
     device: str = "auto",
-    gpu_model: str = "large-v3-turbo",
+    gpu_model: str = "auto",
     cpu_model: str = "small",
     on_status: Callable[[str], None] = lambda s: None,
     language: str | None = None,
     initial_prompt: str | None = DEFAULT_PROMPT,
     vocabulary: Sequence[str] = (),
+    beam_size: int = 0,
     **cpu_kwargs,
 ) -> Transcriber | OpenVinoTranscriber:
-    """device "auto": iGPU if OpenVINO sees one, else CPU. "gpu": iGPU, CPU if that fails.
-    "cpu": always faster-whisper on the CPU."""
+    """device "auto" / "gpu": NVIDIA GPU (CUDA) if there is one, else the Intel iGPU
+    (OpenVINO), else the CPU. "cuda" / "igpu": only that GPU, else the CPU. "cpu": always
+    faster-whisper on the CPU. A GPU that fails to load falls back to the next option.
+    beam_size 0 = auto: 5 on CUDA, 1 on the CPU (the iGPU pipeline only decodes greedily).
+    gpu_model "auto": by free VRAM on CUDA (cuda_choice), large-v3-turbo on the iGPU, where
+    large-v3 was 4x slower at the same accuracy."""
     common = dict(language=language, initial_prompt=initial_prompt, vocabulary=vocabulary)
-    if device in ("auto", "gpu"):
-        if gpu_available():
+    if device in ("auto", "gpu", "cuda"):
+        if cuda_available():
             try:
-                return OpenVinoTranscriber(gpu_model, "GPU", on_status=on_status, **common)
+                return CudaTranscriber(gpu_model, on_status=on_status, beam_size=beam_size,
+                                       **common)
+            except Exception:
+                log.exception("CUDA backend failed, trying the next one")
+        else:
+            log.info("no usable NVIDIA GPU found")
+    if device in ("auto", "gpu", "igpu"):
+        ov_device = intel_gpu()
+        if ov_device:
+            try:
+                model = GPU_MODEL if gpu_model == "auto" else gpu_model
+                return OpenVinoTranscriber(model, ov_device, on_status=on_status, **common)
             except Exception:
                 log.exception("GPU backend failed, falling back to CPU")
         else:
             log.info("no OpenVINO GPU found, using CPU")
     on_status("Loading model…")
-    return Transcriber(cpu_model, **common, **cpu_kwargs)
+    return Transcriber(cpu_model, **common, beam_size=beam_size or 1, **cpu_kwargs)

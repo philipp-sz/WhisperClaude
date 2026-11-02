@@ -7,17 +7,24 @@ max_hold_s = 0.5      # holding the key longer than this doesn't count as a tap
 cancel_key = "esc"    # pressed while recording: throw the recording away ("" = off)
 
 [model]
-device = "auto"       # "auto" = Intel iGPU via OpenVINO if available, else CPU | "gpu" | "cpu"
-gpu_model = "large-v3-turbo"  # on the iGPU: ~0.3 s per 10 s audio, ~half the energy of the CPU path
+device = "auto"       # "auto" = NVIDIA GPU (CUDA) if available, else Intel iGPU (OpenVINO), else CPU
+                      # | "cuda" | "igpu" | "cpu"  (NVIDIA needs: pip install -e .[cuda])
+gpu_model = "auto"    # "auto": NVIDIA GPU with 4 GB free: "large-v3" (11-19 % fewer errors,
+                      # 0.66 s per 10 s on an RTX 4070; int8 below 7 GB), else "large-v3-turbo";
+                      # iGPU: "large-v3-turbo" (~0.3 s per 10 s, ~half the energy of the CPU)
 cpu_model = "small"   # CPU fallback (faster-whisper): "small" (fast) / "large-v3-turbo" (~5x slower)
-# The following four only apply to the CPU path:
+# compute_type, cpu_threads and batch_size only apply to the CPU path. On an NVIDIA GPU the
+# precision follows the free memory: float16 with 7 GB, else int8 (see docs/transcription.md).
 compute_type = "int8"
-cpu_threads = 4       # 8 was slower for small (P/E-core mix), see docs/decisions.md
-beam_size = 1         # 5 = slightly different results, ~10 % slower
+cpu_threads = 4       # 8 was slower for small (P/E-core mix), see docs/transcription.md
+beam_size = 0         # 0 = auto: 5 on an NVIDIA GPU (fewer errors, +5 % time), 1 on the CPU
+                      # (5 there: ~10 % slower, no gain). The iGPU always decodes greedily.
 batch_size = 4
-language = ""         # "" = auto-detect (German/English), or lock it: "de" / "en"
-# Correctly punctuated example text; Whisper copies its style (punctuation, casing)
-# and it keeps mixed German/English audio from being translated into one language.
+language = ""         # "" = auto-detect (any of Whisper's ~100 languages), or lock it: "de", "fr", ...
+# Correctly punctuated example text; Whisper copies its style (punctuation, casing).
+# Write it in the language(s) you dictate in: one short sentence per language. With
+# several languages it also keeps mixed audio from being translated into one of them.
+# This default is for German + English.
 initial_prompt = "Hallo, das ist ein Test. Okay, so let's see how this works, and then we'll decide."
 # Words Whisper should spell exactly as written (names, products, technical terms).
 # Fixed in tests: "Klot" -> "Claude", "Gmini" -> "Gemini"; "cloud" + "Claude" together work.

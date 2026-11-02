@@ -7,12 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from whisperclaude.hotkey import parse_key
-from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY
+from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY, WHISPER_LANGUAGES
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 COMPUTE_TYPES = {"int8", "int8_float32", "int16", "float32"}
 TRAY_STYLES = ("classic", "pulse", "bars", "ring")  # = tray_icons.STYLES (not imported: PIL)
-DEVICES = {"auto", "gpu", "cpu"}
+DEVICES = {"auto", "gpu", "cuda", "igpu", "cpu"}
 
 
 class ConfigError(ValueError):
@@ -45,14 +45,14 @@ class HotkeyConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    device: str = "auto"              # "auto" = iGPU if available, else CPU | "gpu" | "cpu"
-    gpu_model: str = "large-v3-turbo"  # OpenVINO model on the iGPU
+    device: str = "auto"  # "auto"/"gpu": NVIDIA GPU, else Intel iGPU, else CPU | "cuda" | "igpu" | "cpu"
+    gpu_model: str = "auto"  # "auto": NVIDIA large-v3 or -turbo by free VRAM, iGPU -turbo
     cpu_model: str = "small"           # faster-whisper model on the CPU (fallback)
     compute_type: str = "int8"
     cpu_threads: int = 4
-    beam_size: int = 1
+    beam_size: int = 0        # 0 = auto: 5 on an NVIDIA GPU, 1 on the CPU
     batch_size: int = 4
-    language: str = ""        # "" = auto-detect, else e.g. "de" / "en"
+    language: str = ""        # "" = auto-detect (any of Whisper's 99 languages), else e.g. "de"
     initial_prompt: str = DEFAULT_PROMPT
     vocabulary: tuple[str, ...] = DEFAULT_VOCABULARY  # words Whisper should spell exactly
 
@@ -62,10 +62,11 @@ class ModelConfig:
                "[model] vocabulary must be a list of non-empty strings")
         _check(self.compute_type in COMPUTE_TYPES,
                f"[model] compute_type must be one of {sorted(COMPUTE_TYPES)}")
-        for key in ("cpu_threads", "beam_size", "batch_size"):
+        for key in ("cpu_threads", "batch_size"):
             _check(1 <= getattr(self, key) <= 32, f"[model] {key} must be 1–32")
-        _check(self.language == "" or (len(self.language) == 2 and self.language.isalpha()),
-               '[model] language must be "" (auto) or a 2-letter code like "de"')
+        _check(0 <= self.beam_size <= 32, "[model] beam_size must be 0 (auto) or 1–32")
+        _check(self.language == "" or self.language in WHISPER_LANGUAGES,
+               '[model] language must be "" (auto) or a Whisper language code, e.g. "de", "fr"')
 
 
 @dataclass(frozen=True)

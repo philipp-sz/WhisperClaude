@@ -30,7 +30,9 @@ RESULTS = ROOT / "bench_audio" / "eval_results.json"
 MODELS = {
     "turbo-int8": "OpenVINO/whisper-large-v3-turbo-int8-ov",  # today's default
     "turbo-fp16": "OpenVINO/whisper-large-v3-turbo-fp16-ov",
+    "turbo-int4": "OpenVINO/whisper-large-v3-turbo-int4-ov",
     "v3-int8": "OpenVINO/whisper-large-v3-int8-ov",
+    "v3-int4": "OpenVINO/whisper-large-v3-int4-ov",
     "v3-fp16": "OpenVINO/whisper-large-v3-fp16-ov",
 }
 REFS = {cid: text.replace("[Pause] ", "").replace(" [Pause]", "") for cid, text in CORPUS}

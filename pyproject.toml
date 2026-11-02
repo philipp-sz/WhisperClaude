@@ -20,6 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+# NVIDIA GPU: the CUDA 12 libraries CTranslate2 needs (~1.3 GB), for Whisper and translation
+cuda = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12>=9,<10"]
 
 [tool.setuptools]
 packages = ["whisperclaude"]

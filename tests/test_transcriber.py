@@ -28,14 +28,18 @@ def load(lang):
         return np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768
 
 
-@pytest.fixture(scope="module", params=["cpu", "gpu"])
+@pytest.fixture(scope="module", params=["cpu", "igpu", "cuda"])
 def transcriber(request):
     from whisperclaude import transcriber as t
     if request.param == "cpu":
         return t.Transcriber()
-    if not t.gpu_available():
-        pytest.skip("no OpenVINO GPU")
-    return t.OpenVinoTranscriber()
+    if request.param == "cuda":
+        if not t.cuda_available():
+            pytest.skip("no NVIDIA GPU / CUDA libraries")
+        return t.CudaTranscriber()
+    if not t.intel_gpu():
+        pytest.skip("no Intel GPU for OpenVINO")
+    return t.OpenVinoTranscriber(device=t.intel_gpu())
 
 
 @pytest.mark.slow
