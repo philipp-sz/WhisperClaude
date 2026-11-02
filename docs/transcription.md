@@ -80,6 +80,19 @@ The noise reduction is a Wiener filter on the spectrogram: the noise is the mean
 
 On the CPU (`small`, Core i5-10600K, 40 sentences per set, about 800 words), int8 scored 8.98% / 33.33% (German clean / noisy) and 5.32% / 13.36% (English), float32 8.46% / 33.46% and 5.06% / 13.10%. The gaps are 2–4 words, and float32 took 20% longer, so the CPU stays on int8. On the iGPU, int8 and fp16 had the same WER on the author's voice (see "iGPU: OpenVINO GenAI").
 
+Smaller precision for the iGPU and the CPU, OpenVINO GenAI on the CPU device of the desktop (Core i5-10600K, 4 threads), same FLEURS sets with 30 sentences each (about 600 words, so differences below 1 point are noise). The accuracy carries over to the iGPU; the iGPU speed has to be measured on the laptop (`scripts/eval_quality.py --models turbo-int8 v3-int8 v3-int4 turbo-int4`):
+
+| OpenVINO model | German clean / noisy | English clean / noisy | Mean | CPU time per 10 s | RAM |
+|---|---|---|---|---|---|
+| `large-v3-turbo` int8 (iGPU default) | 4.55% / 14.17% | 4.74% / 6.74% | 7.55% | 7.6–9.4 s | 1.9 GB |
+| `large-v3-turbo` int4 | 5.56% / 17.03% | 3.83% / 8.74% | 8.79% | 6.4–8.0 s | 1.2 GB |
+| `large-v3` int8 | 4.05% / 12.82% | 4.19% / 6.56% | 6.90% | 11.7–13.3 s | 4.0 GB |
+| `large-v3` int4 | 4.22% / 13.83% | 4.92% / 8.93% | 7.97% | 9.0–10.4 s | 2.6 GB |
+
+int4 weights cost accuracy for both models, mostly on noisy audio, and `large-v3` in int4 was no better than the turbo in int8. They are not used. `large-v3` in int8 had the fewest errors, 9% fewer than the turbo, at 1.5 times the CPU time and twice the RAM. On the author's voice on the iGPU it had the same WER as the turbo and took 4 times as long (see "iGPU: OpenVINO GenAI"), so the iGPU keeps the turbo; `[model] gpu_model = "large-v3"` switches it.
+
+On the CPU, OpenVINO ran `large-v3-turbo` int8 in 7.6–9.4 s per 10 s, faster than faster-whisper (14 s) and at about half the errors of `small` (see below). It is still too slow for the CPU fallback: the last chunk of a dictation (up to 30 s) would take up to about 28 s after the stop tap, against about 10 s with `small`.
+
 OpenVINO lists an NVIDIA card as `GPU` too (through OpenCL, seen with an RTX 4070). Its GPU plugin is made for Intel GPUs, so the iGPU path only takes a device whose name contains "Intel".
 
 ## Decoding
@@ -113,3 +126,12 @@ Every 5 s while recording, the audio so far is passed to the VAD. A chunk is tra
 ## Rejected: LLM cleanup
 
 Five local models from 0.27B to 1.2B parameters (llama.cpp, CPU, 11 test cases) were tested for cleaning up the transcript. Models below 1B parameters answered questions in the text, translated mixed text or changed almost nothing. LFM2.5-1.2B fixed misheard words but also translated mixed text and added 1–4 s. Whisper with the prompt was kept without a cleanup step.
+
+## Open measurements on the laptop
+
+The desktop measurements above cover accuracy; these still need the laptop (Core Ultra 7 258V, Arc 140V iGPU) and the author's corpus (`bench_audio/corpus/`, git-ignored; `scripts/record_corpus.py` records it again if it is missing). After pulling: `.venv\Scripts\python.exe -m pip install -e .[dev]` (adds py3langid); the first start downloads NLLB-600M (0.6 GB).
+
+1. `large-v3` on the iGPU: `scripts\eval_quality.py --models turbo-int8 v3-int8 --beams 1 --prompts app`. Compare WER (short clips and long dictations), time to text after the stop tap and GPU time per audio minute. The iGPU decodes greedily, so only beam 1 applies. If `large-v3` wins on WER at an acceptable time to text, `create_transcriber()` can pick it on the iGPU too (`GPU_MODEL` in `transcriber.py`).
+2. int4 on the iGPU: the same run with `--models turbo-int4 v3-int4`. On the CPU int4 cost accuracy; it only pays off if it is much faster on the iGPU.
+3. Translation on the laptop CPU: time to translate a few sentences with NLLB-600M (the default there) and with `[translation] model = "nllb-1.3b"` (2.3 times slower on the desktop CPU, 1–1.5 COMET points better).
+4. Quiet microphone: the dictation errors seen in real use may come from the low input level. Compare the corpus WER at the current Windows input level and at a higher one.
