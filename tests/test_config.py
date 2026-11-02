@@ -121,6 +121,18 @@ def test_tray_style(tmp_path):
         load_config(path)
 
 
+def test_pill_style(tmp_path):
+    from whisperclaude.config import PILL_STYLES
+    from whisperclaude.overlay import STYLES
+    assert PILL_STYLES == STYLES  # kept apart so config.py doesn't import Tk and numpy
+    path = tmp_path / "config.toml"
+    path.write_text('[pill]\nstyle = "gradient"\n', encoding="utf-8")
+    assert load_config(path).pill.style == "gradient"
+    path.write_text('[pill]\nstyle = "sparkles"\n', encoding="utf-8")
+    with pytest.raises(ConfigError, match="style"):
+        load_config(path)
+
+
 def test_my_languages(tmp_path):
     path = tmp_path / "config.toml"
     assert load_config(path).translation.my_languages == ()  # default: ask Windows

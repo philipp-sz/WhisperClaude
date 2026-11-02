@@ -207,7 +207,7 @@ def main() -> None:
     enable_dpi_awareness()
     root = tk.Tk()
     root.report_callback_exception = lambda *exc: log.error("error in Tk callback", exc_info=exc)
-    overlay = Overlay(root)
+    overlay = Overlay(root, cfg.pill.style)
     events = WakeQueue()
 
     def request_quit() -> None:  # thread-safe: tray thread, signal handler
@@ -237,7 +237,7 @@ def main() -> None:
     history = History(data_dir, cfg.history.keep)
     hotkey = key_label(cfg.hotkey.key)
     tray = Tray(request_quit, request_restart, log_path, CONFIG_PATH, hotkey, history,
-                copy_to_clipboard, style=cfg.tray.style, level_fn=lambda: recorder.level)
+                copy_to_clipboard, style=cfg.tray.style, level_fn=lambda: overlay.meter.unit)
     tray.start()
 
     def remember(text: str, translation: str = "", target: str = "") -> None:  # worker thread
@@ -318,7 +318,8 @@ def main() -> None:
                 spawn_new_instance()
             root.destroy()
 
-        overlay.show_goodbye("Restarting…" if restart else "WhisperClaude stopped", finish)
+        overlay.show_goodbye("Restarting…" if restart else "WhisperClaude stopped", finish,
+                             restart)
 
     gap = GapDetector()
     last_poll = [time.monotonic()]

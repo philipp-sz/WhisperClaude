@@ -13,6 +13,7 @@ from whisperclaude.languages import SOURCE_CODES
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 COMPUTE_TYPES = {"int8", "int8_float32", "int16", "float32"}
 TRAY_STYLES = ("classic", "pulse", "bars", "ring")  # = tray_icons.STYLES (not imported: PIL)
+PILL_STYLES = ("wave", "gradient", "classic")  # = overlay.STYLES (not imported: Tk, numpy)
 DEVICES = {"auto", "gpu", "cuda", "igpu", "cpu"}
 TRANSLATION_DEVICES = {"auto", "cuda", "cpu"}
 TRANSLATION_MODELS = ("auto", "nllb-600m", "nllb-1.3b")  # translator.MODELS (heavy import)
@@ -98,6 +99,14 @@ class TrayConfig:
 
 
 @dataclass(frozen=True)
+class PillConfig:
+    style: str = "wave"  # status pill animation: "wave", "gradient" (bars) or "classic"
+
+    def __post_init__(self) -> None:
+        _check(self.style in PILL_STYLES, f"[pill] style must be one of {list(PILL_STYLES)}")
+
+
+@dataclass(frozen=True)
 class PasteConfig:
     restore_delay_s: float = 0.3  # wait before restoring the old clipboard
 
@@ -150,6 +159,7 @@ class Config:
     recording: RecordingConfig = field(default_factory=RecordingConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
     tray: TrayConfig = field(default_factory=TrayConfig)
+    pill: PillConfig = field(default_factory=PillConfig)
     paste: PasteConfig = field(default_factory=PasteConfig)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
@@ -161,7 +171,8 @@ class Config:
 
 
 SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "recording": RecordingConfig,
-            "history": HistoryConfig, "tray": TrayConfig, "paste": PasteConfig,
+            "history": HistoryConfig, "tray": TrayConfig, "pill": PillConfig,
+            "paste": PasteConfig,
             "commands": CommandsConfig, "translation": TranslationConfig}
 
 

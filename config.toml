@@ -48,6 +48,11 @@ keep = 5
 # original static icon). Animations only run while recording/transcribing.
 style = "bars"
 
+[pill]
+# Animation of the status pill while recording, transcribing and translating: "wave" (layered
+# color waves), "gradient" (level bars in a color gradient) or "classic" (plain bars).
+style = "wave"
+
 [translation]
 # Tap the key alone: translates selected text (it is replaced by the translation), or, while
 # dictating, stops the recording and pastes the dictation translated. A list opens to pick
