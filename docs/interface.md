@@ -23,6 +23,8 @@ The tray icon shows the state: grey loading, green ready, red recording, amber t
 
 ## Clipboard and history
 
+The previous clipboard is restored in every case: after a paste, after a paste that fails (for example a keyboard error after the text went in) and after the app copied a selection for translation (also if reading the copy fails). The restore waits up to 3 s for a busy clipboard. It is skipped only if the user copied something new while the text was pasted. The app detects that with Windows' clipboard change counter, so a clipboard manager that writes the same text again does not count. If the old clipboard cannot be read (another app holds it for more than a second), nothing is pasted and no selection is copied: the dictation stays in "Recent dictations", and what cannot be put back is never overwritten. Formats beyond 1 GB are not saved, which is logged. The Copy button and the tray entry are the only places that write the clipboard on purpose. Not covered: the app being killed within the 0.3 s of a paste, and an app that copies the selection more than 0.6 s after Ctrl+Insert.
+
 Pasting needs the clipboard: the app puts the text there, sends Ctrl+V and restores the previous content after 0.3 s, including images and files. Apart from that, the app never writes the clipboard. Earlier versions copied a dictation to the clipboard when it could not be pasted, which replaced whatever the user had copied. Such a dictation is now kept instead:
 
 | Case | Pill | Note in "Recent dictations" |

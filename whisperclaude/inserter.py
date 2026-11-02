@@ -25,7 +25,8 @@ CF_UNICODETEXT = 13
 # Formats whose data is a GDI handle, not memory we can copy. Windows synthesizes CF_BITMAP
 # from the CF_DIB / CF_DIBV5 copy, so images still come back. 0x200-0x3FF: private formats.
 _NOT_MEMORY = {2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E}
-MAX_SAVE_BYTES = 256 * 1024 * 1024 # skip formats beyond this (memory), e.g. huge images
+MAX_SAVE_BYTES = 1024 * 1024 * 1024 # formats beyond this aren't saved (memory), e.g. huge images
+RESTORE_TIMEOUT_S = 3.0 # a busy clipboard is waited for longer when the old content goes back
 GMEM_MOVEABLE = 0x0002
 HWND_MESSAGE = wintypes.HWND(-3)
 
@@ -106,6 +107,9 @@ def save_clipboard() -> Saved:
                 continue
             handle = _GetClipboardData(fmt)
             size = _GlobalSize(handle) if handle else 0
+            if size and total + size > MAX_SAVE_BYTES:
+                log.warning("clipboard format %d (%d MB) is too large to save, "
+                            "it won't be restored", fmt, size >> 20)
             if not size or total + size > MAX_SAVE_BYTES:
                 continue
             ptr = _GlobalLock(handle)
@@ -119,9 +123,9 @@ def save_clipboard() -> Saved:
     return saved
 
 
-def _write(items: Saved) -> None:
+def _write(items: Saved, timeout: float = 1.0) -> None:
     """Replace the clipboard with these formats (empty list = empty clipboard)."""
-    with _opened():
+    with _opened(timeout):
         if not _EmptyClipboard():
             raise ClipboardError(f"EmptyClipboard failed (error {ctypes.get_last_error()})")
         for fmt, data in items:
@@ -136,7 +140,17 @@ def _write(items: Saved) -> None:
 
 
 def restore_clipboard(saved: Saved) -> None:
-    _write(saved + _NO_HISTORY if saved else []) # the restore isn't a new history entry
+    # the restore isn't a new history entry
+    _write(saved + _NO_HISTORY if saved else [], RESTORE_TIMEOUT_S)
+
+
+def _restore_quietly(saved: Saved) -> None:
+    """Put the old clipboard back. A failure is logged, never raised: the caller has a result
+    (or an error) of its own, and must not lose it over the restore."""
+    try:
+        restore_clipboard(saved)
+    except ClipboardError:
+        log.warning("could not restore the previous clipboard", exc_info=True)
 
 
 def set_clipboard_text(text: str) -> None:
@@ -234,55 +248,66 @@ def capture_selection(timeout: float = 0.6) -> str | None:
 
     Saves the clipboard, sends Ctrl+Insert (copy, like Ctrl+C; but in a terminal without a
     selection Ctrl+C would interrupt the running program), reads the text and puts the old
-    clipboard back. An app that copies nothing leaves the clipboard unchanged: no selection.
+    clipboard back, whatever happens in between. An app that copies nothing leaves the
+    clipboard unchanged: no selection. If the old clipboard can't be saved (another app holds
+    it), nothing is copied and ClipboardError is raised.
     VS Code copies the whole line when nothing is selected; it marks that, so it counts as no
     selection too (translating it would paste a translated copy of the line).
     """
+    saved = save_clipboard()
+    sequence = _GetClipboardSequenceNumber()
     try:
-        saved: Saved | None = save_clipboard()
-    except ClipboardError:
-        log.warning("could not read the clipboard; it won't be restored", exc_info=True)
-        saved = None
-    if not _copy_selection(timeout):
-        return None # nothing copied, the clipboard is untouched
-    text, vscode = _read_copied()
-    if saved is not None:
-        try:
-            restore_clipboard(saved)
-        except ClipboardError:
-            log.warning("could not restore the previous clipboard", exc_info=True)
+        if not _copy_selection(timeout):
+            return None # nothing copied, the clipboard is untouched
+        text, vscode = _read_copied()
+    finally:
+        if _GetClipboardSequenceNumber() != sequence: # the app copied, even if reading failed
+            _restore_quietly(saved)
     if b'"isFromEmptySelection":true' in vscode.replace(b" ", b""):
         return None
     return text.replace("\r\n", "\n") if text else None
 
 
+def _holds_other_text(ours: str) -> bool:
+    """True if the clipboard holds anything but our text (or nothing). A clipboard that is
+    busy right now counts as ours: a clipboard manager reading what we just put there."""
+    try:
+        return clipboard_text() != ours
+    except ClipboardError:
+        return False
+
+
+def _restore_unless_copied(saved: Saved, ours: str, sequence: int | None) -> None:
+    """Put the old clipboard back after a paste, unless the user copied something new since our
+    text went in (sequence: the clipboard's change counter right after that; None: putting our
+    text in failed, which may have emptied the clipboard). A failed restore isn't raised: the
+    text is pasted already."""
+    if (sequence is not None and _GetClipboardSequenceNumber() != sequence
+            and _holds_other_text(ours)):
+        log.info("clipboard changed since the paste (you copied something?), not restoring")
+        return
+    _restore_quietly(saved)
+
+
 def paste_text(text: str, restore_delay: float = 0.3) -> None:
-    """Paste text into whatever has focus, then put the previous clipboard back exactly."""
+    """Paste text into whatever has focus, then put the previous clipboard back exactly, also
+    if the paste fails. If the old clipboard can't be saved (another app holds it), nothing is
+    pasted and ClipboardError is raised: what can't be put back is never overwritten."""
     if not text:
         return
-    try:
-        saved: Saved | None = save_clipboard()
-    except ClipboardError:
-        log.warning("could not read the clipboard; it won't be restored", exc_info=True)
-        saved = None
+    saved = save_clipboard()
     text = to_clipboard_text(text)
-    set_clipboard_text(text)
-
-    wait_for_modifiers_released()
-    time.sleep(0.05)
-    kb = Controller()
-    with kb.pressed(Key.ctrl):
-        kb.tap("v")
-
-    # The target app reads the clipboard asynchronously; restoring too early
-    # would paste the old content instead.
-    time.sleep(restore_delay)
-    if saved is None:
-        return
-    try: # the text is pasted already: a failed restore is no reason to report an error
-        if clipboard_text() != text:
-            log.info("clipboard changed since the paste (you copied something?), not restoring")
-            return
-        restore_clipboard(saved)
-    except ClipboardError:
-        log.warning("could not restore the previous clipboard", exc_info=True)
+    sequence = None
+    try:
+        set_clipboard_text(text)
+        sequence = _GetClipboardSequenceNumber()
+        wait_for_modifiers_released()
+        time.sleep(0.05)
+        kb = Controller()
+        with kb.pressed(Key.ctrl):
+            kb.tap("v")
+        # The target app reads the clipboard asynchronously; restoring too early
+        # would paste the old content instead.
+        time.sleep(restore_delay)
+    finally:
+        _restore_unless_copied(saved, text, sequence)
