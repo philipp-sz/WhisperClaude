@@ -18,13 +18,13 @@ from whisperclaude.languages import NLLB_CODES, SOURCE_CODES
 
 log = logging.getLogger(__name__)
 
-MODELS = {  # config name -> pre-converted CTranslate2 model (int8) on Hugging Face
+MODELS = { # config name -> pre-converted CTranslate2 model (int8) on Hugging Face
     "nllb-600m": "JustFrederik/nllb-200-distilled-600M-ct2-int8",
     "nllb-1.3b": "OpenNMT/nllb-200-distilled-1.3B-ct2-int8",
 }
-AUTO_MODEL = {"cuda": "nllb-1.3b", "cpu": "nllb-600m"}  # see docs/translation.md
-LOW_VRAM_MB = 2048  # "auto" on CUDA with less free VRAM (after Whisper): the smaller model
-MIN_DETECT_CHARS = 25  # shorter sentences take the language of the whole text
+AUTO_MODEL = {"cuda": "nllb-1.3b", "cpu": "nllb-600m"} # see docs/translation.md
+LOW_VRAM_MB = 2048 # "auto" on CUDA with less free VRAM (after Whisper): the smaller model
+MIN_DETECT_CHARS = 25 # shorter sentences take the language of the whole text
 MIN_CONFIDENCE = 0.9
 
 # A sentence ends after . ! ? … (plus closing quotes/brackets) and a space before a capital
@@ -71,7 +71,7 @@ def segment(text: str) -> list[tuple[str, list[str], str]]:
 
 
 _SPACE_BEFORE = re.compile(r"(?<=\S) +([,.](?!\d)|[!?;:](?!\S))")
-_SPACE_BEFORE_FR = re.compile(r"(?<=\S) +([,.](?!\d))")  # French keeps "Merci !"
+_SPACE_BEFORE_FR = re.compile(r"(?<=\S) +([,.](?!\d))") # French keeps "Merci !"
 _CONTRACTION = re.compile(r"(?<=\w) '(s|re|ll|ve|m|d)\b|(?<=n) '(t)\b|(?<=\w) (n't)\b")
 
 
@@ -190,7 +190,7 @@ class Translator:
             if free is not None and free < LOW_VRAM_MB:
                 self.model_name = AUTO_MODEL["cpu"]
         repo = MODELS.get(self.model_name, self.model_name)
-        try:  # cached: no network request at startup
+        try: # cached: no network request at startup
             path = snapshot_download(repo, local_files_only=True)
         except Exception:
             on_status("Downloading translation model (one-time)…")
@@ -201,7 +201,7 @@ class Translator:
         self.tokenizer = Tokenizer.from_file(str(Path(path) / "tokenizer.json"))
         self.beam_size = beam_size
         self.detector = LanguageDetector(list(languages) or None)
-        self.translate("Hallo.", "eng_Latn")  # first call sets up the device: pay it here
+        self.translate("Hallo.", "eng_Latn") # first call sets up the device: pay it here
 
     def _tokens(self, sentence: str, source: str) -> list[str]:
         ids = self.tokenizer.encode(sentence, add_special_tokens=False).ids

@@ -6,7 +6,7 @@ import pytest
 
 from whisperclaude import inserter
 
-TEXT = 13  # CF_UNICODETEXT
+TEXT = 13 # CF_UNICODETEXT
 
 
 def as_text(saved):
@@ -45,7 +45,7 @@ def test_pastes_text_and_restores_every_format(fake):
     inserter.paste_text("Grüße, neuer Text")
     assert fake["at_ctrl_v"] == "Grüße, neuer Text"
     assert fake["keys"] == [("hold", inserter.Key.ctrl), ("tap", "v")]
-    assert fake["clipboard"] == before  # text and image
+    assert fake["clipboard"] == before # text and image
 
 
 def test_empty_text_does_nothing(fake):
@@ -78,7 +78,7 @@ def test_failed_clipboard_restore_is_not_a_paste_error(fake, monkeypatch):
         raise inserter.ClipboardError("clipboard locked")
 
     monkeypatch.setattr(inserter, "restore_clipboard", locked)
-    inserter.paste_text("neu")  # must not raise: the text was pasted
+    inserter.paste_text("neu") # must not raise: the text was pasted
     assert fake["at_ctrl_v"] == "neu"
 
 
@@ -108,6 +108,6 @@ def test_dictation_goes_into_win_v_history_but_never_into_the_cloud():
         assert no_cloud in formats and no_history not in formats
         inserter.restore_clipboard([(TEXT, "alt\0".encode("utf-16-le"))])
         formats = {f for f, _ in inserter.save_clipboard()}
-        assert {no_cloud, no_history} <= formats  # the old content isn't a new history entry
+        assert {no_cloud, no_history} <= formats # the old content isn't a new history entry
     finally:
         inserter.restore_clipboard(users)

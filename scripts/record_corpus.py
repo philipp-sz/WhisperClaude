@@ -16,12 +16,12 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from scripts.benchmark import AUDIO_DIR, SR, save_wav  # noqa: E402
-from whisperclaude.recorder import Recorder  # noqa: E402
+from scripts.benchmark import AUDIO_DIR, SR, save_wav # noqa: E402
+from whisperclaude.recorder import Recorder # noqa: E402
 
 CORPUS_DIR = AUDIO_DIR / "corpus"
 
-CORPUS = [  # (id, text) -- generic content only, no personal details
+CORPUS = [ # (id, text) -- generic content only, no personal details
     ("de_einigen",
      "Hey Tom, ich glaube, wir sollten uns bis Freitag auf einen Termin einigen. Die Küche muss "
      "vorher noch gereinigt werden, das übernehme ich. Kannst du mir kurz Bescheid geben, ob "
@@ -119,7 +119,7 @@ def main() -> None:
     k = 0
     while k < len(todo):
         cid, text = todo[k]
-        print("\033[2J\033[H", end="")  # clear the screen: only the current text
+        print("\033[2J\033[H", end="") # clear the screen: only the current text
         print(f"[{k + 1}/{len(todo)}]\n\n" + textwrap.fill(text, 80) + "\n")
         rec.start()
         cmd = input("● REC  read it aloud, then Enter   (r = again, q = stop): ").strip().lower()

@@ -6,7 +6,7 @@ import ctypes
 import logging
 import queue
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from pynput import mouse
 from pynput.keyboard import Key, KeyCode, Listener
@@ -21,9 +21,9 @@ MAX_HOLD_S = 0.5
 WM_KEYDOWN, WM_SYSKEYDOWN = 0x100, 0x104
 LLKHF_EXTENDED = 0x01
 KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP = 0x1, 0x2
-MASK_VK = 0xE8  # unassigned virtual key (AutoHotkey's "menu mask key" does the same)
-MASKED_VKS = {0x12, 0xA4, 0xA5, 0x5B, 0x5C}  # Alt, Left/Right Alt, Left/Right Win
-OWN_EVENT = 0x57434C44  # dwExtraInfo of the key events we send ourselves ("WCLD")
+MASK_VK = 0xE8 # unassigned virtual key (AutoHotkey's "menu mask key" does the same)
+MASKED_VKS = {0x12, 0xA4, 0xA5, 0x5B, 0x5C} # Alt, Left/Right Alt, Left/Right Win
+OWN_EVENT = 0x57434C44 # dwExtraInfo of the key events we send ourselves ("WCLD")
 
 
 class TapDetector:
@@ -47,7 +47,7 @@ class TapDetector:
 
     def press(self, key: Key | KeyCode | None) -> None:
         if key == self.target:
-            if self._down_at is None:  # ignore auto-repeat while held
+            if self._down_at is None: # ignore auto-repeat while held
                 self._down_at = self.clock()
                 self._interrupted = False
         else:
@@ -115,13 +115,13 @@ class TranslateKeyFilter:
     def __init__(self, vk: int, max_hold: float, on_tap: Callable[[], None],
                  suppress: Callable[[], None], clock: Callable[[], float] = time.monotonic,
                  send: Callable[[int, int, int], None] = _send_masked_release) -> None:
-        self.tap = TapDetector(vk, max_hold, clock)  # on virtual-key codes
+        self.tap = TapDetector(vk, max_hold, clock) # on virtual-key codes
         self.vk, self.on_tap, self.suppress, self.send = vk, on_tap, suppress, send
 
     def interrupt(self) -> None:
         self.tap.interrupt()
 
-    def __call__(self, msg: int, data) -> bool:
+    def __call__(self, msg: int, data: ctypes.Structure) -> bool:
         if not self.vk or (data.dwExtraInfo or 0) == OWN_EVENT:
             return True
         try:
@@ -134,10 +134,10 @@ class TranslateKeyFilter:
             if data.vkCode not in MASKED_VKS:
                 return True
             self.send(data.vkCode, data.scanCode, data.flags)
-        except Exception:  # any other exception would stop pynput's listener
+        except Exception: # any other exception would stop pynput's listener
             log.exception("translate key filter failed")
             return True
-        self.suppress()  # raises: Windows drops the original key-up
+        self.suppress() # raises: Windows drops the original key-up
         return False
 
 
@@ -166,7 +166,7 @@ class HotkeyListener:
 
         def on_press(k: Key | KeyCode | None) -> None:
             tap.press(k)
-            if k is not None and k == self._cancel_key:  # App ignores it unless recording
+            if k is not None and k == self._cancel_key: # App ignores it unless recording
                 self._events.put((CANCEL, None))
 
         def on_release(k: Key | KeyCode | None) -> None:

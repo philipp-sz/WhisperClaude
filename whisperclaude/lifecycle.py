@@ -46,11 +46,11 @@ def previous_instance_died(folder: Path, now: float | None = None) -> str | None
         pid = int(marker.read_text(encoding="utf-8").strip())
         last_seen = marker.stat().st_mtime
     except (OSError, ValueError):
-        return None  # no marker (clean exit or first run) or unreadable
+        return None # no marker (clean exit or first run) or unreadable
     if pid != os.getpid() and psutil.pid_exists(pid):
         try:
             if "python" in psutil.Process(pid).name().lower():
-                return None  # still running (the mutex decides what happens next)
+                return None # still running (the mutex decides what happens next)
         except psutil.Error:
             pass
     ago = (now if now is not None else time.time()) - last_seen

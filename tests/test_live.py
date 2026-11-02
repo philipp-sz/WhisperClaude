@@ -34,7 +34,7 @@ def vad(monkeypatch):
 def test_speech_chunks_merge_passages_up_to_30_s():
     chunks = t.speech_chunks(dictation())
     assert [len(c) / SR for c in chunks] == [24 + t.LEAD_IN_S] * 4
-    lead = int(t.LEAD_IN_S * SR)  # each chunk starts with silence, then the speech
+    lead = int(t.LEAD_IN_S * SR) # each chunk starts with silence, then the speech
     assert all(not c[:lead].any() and c[lead:].all() for c in chunks)
 
 
@@ -46,19 +46,19 @@ def language_of_burst(audio):
 def test_passages_in_different_languages_are_never_merged():
     """Whisper uses one language per chunk: a merged German + English chunk got translated."""
     calls = []
-    detect = lambda a: calls.append(1) or language_of_burst(a)  # noqa: E731
+    detect = lambda a: calls.append(1) or language_of_burst(a) # noqa: E731
     chunks = t.speech_chunks(dictation(n_bursts=4), detect)
-    assert [len(c) / SR for c in chunks] == [8 + t.LEAD_IN_S] * 4  # de / en / de / en
+    assert [len(c) / SR for c in chunks] == [8 + t.LEAD_IN_S] * 4 # de / en / de / en
 
-    same = dictation(n_bursts=4) * 0 + np.where(dictation(n_bursts=4) > 0, 1, 0)  # all "de"
+    same = dictation(n_bursts=4) * 0 + np.where(dictation(n_bursts=4) > 0, 1, 0) # all "de"
     assert [len(c) / SR for c in t.speech_chunks(same.astype(np.float32), detect)] == [
-        24 + t.LEAD_IN_S, 8 + t.LEAD_IN_S]  # same language: merged up to 30 s as before
+        24 + t.LEAD_IN_S, 8 + t.LEAD_IN_S] # same language: merged up to 30 s as before
 
 
 def test_a_single_passage_needs_no_language_detection():
     calls = []
     t.speech_chunks(dictation(n_bursts=1), lambda a: calls.append(1) or "de")
-    assert calls == []  # short dictations cost no extra GPU pass
+    assert calls == [] # short dictations cost no extra GPU pass
 
 
 def test_live_detects_each_passage_only_once():
@@ -76,17 +76,17 @@ def test_live_gives_the_same_text_and_leaves_little_for_the_stop():
     audio = dictation()
     calls = []
     live = t.LiveTranscription(lambda chunks: calls.append(len(chunks)) or fake_model(chunks))
-    for end in range(5 * SR, len(audio), 5 * SR):  # what the feeder sees while recording
+    for end in range(5 * SR, len(audio), 5 * SR): # what the feeder sees while recording
         live.feed(audio[:end])
-    assert live.done_s > 90  # most of the 132 s were transcribed before the stop
+    assert live.done_s > 90 # most of the 132 s were transcribed before the stop
     n_before_stop = len(calls)
     text = live.finish(audio)
     assert text == fake_model(t.speech_chunks(audio)) == " ".join(f"w{k}" for k in range(1, 13))
-    assert calls[n_before_stop:] == [1]  # the stop only had the last chunk left
+    assert calls[n_before_stop:] == [1] # the stop only had the last chunk left
 
 
 def test_live_short_recording_does_everything_at_the_stop():
-    audio = dictation(n_bursts=2, speech_s=4)  # 14 s: below LIVE_MIN_TAIL_S
+    audio = dictation(n_bursts=2, speech_s=4) # 14 s: below LIVE_MIN_TAIL_S
     live = t.LiveTranscription(fake_model)
     live.feed(audio)
     assert live.done_s == 0
@@ -106,9 +106,9 @@ def test_live_never_takes_the_newest_audio():
                             pause(3), burst(4, 5)])
     live = t.LiveTranscription(fake_model)
     live.feed(audio[:40 * SR])
-    assert live.done_s == 0  # burst 3 is still being spoken: it might still join chunk 1
+    assert live.done_s == 0 # burst 3 is still being spoken: it might still join chunk 1
     live.feed(audio[:50 * SR])
-    assert live.done_s == 33  # burst 3 is finished and doesn't fit: chunk 1 is final
+    assert live.done_s == 33 # burst 3 is finished and doesn't fit: chunk 1 is final
     assert live.finish(audio) == "w1 w2 w3 w4"
 
 

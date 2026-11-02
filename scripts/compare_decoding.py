@@ -8,8 +8,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from scripts.benchmark import AUDIO_DIR, SR, load_wav  # noqa: E402
-from whisperclaude.transcriber import DEFAULT_PROMPT, Transcriber  # noqa: E402
+from scripts.benchmark import AUDIO_DIR, SR, load_wav # noqa: E402
+from whisperclaude.transcriber import DEFAULT_PROMPT, Transcriber # noqa: E402
 
 # (label, use batched pipeline, extra kwargs)
 VARIANTS = [
@@ -25,7 +25,7 @@ VARIANTS = [
 def main():
     names = sys.argv[1:] or sorted(p.stem for p in AUDIO_DIR.glob("long_*.wav"))
     tr = Transcriber()
-    tr.transcribe(load_wav(AUDIO_DIR / f"{names[0]}.wav"))  # warm-up
+    tr.transcribe(load_wav(AUDIO_DIR / f"{names[0]}.wav")) # warm-up
 
     for name in names:
         audio = load_wav(AUDIO_DIR / f"{name}.wav")

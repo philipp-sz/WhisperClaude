@@ -12,11 +12,11 @@ from whisperclaude.languages import SOURCE_CODES
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 COMPUTE_TYPES = {"int8", "int8_float32", "int16", "float32"}
-TRAY_STYLES = ("classic", "pulse", "bars", "ring")  # = tray_icons.STYLES (not imported: PIL)
-PILL_STYLES = ("wave", "gradient", "classic")  # = overlay.STYLES (not imported: Tk, numpy)
+TRAY_STYLES = ("classic", "pulse", "bars", "ring") # = tray_icons.STYLES (not imported: PIL)
+PILL_STYLES = ("wave", "gradient", "classic") # = overlay.STYLES (not imported: Tk, numpy)
 DEVICES = {"auto", "gpu", "cuda", "igpu", "cpu"}
 TRANSLATION_DEVICES = {"auto", "cuda", "cpu"}
-TRANSLATION_MODELS = ("auto", "nllb-600m", "nllb-1.3b")  # translator.MODELS (heavy import)
+TRANSLATION_MODELS = ("auto", "nllb-600m", "nllb-1.3b") # translator.MODELS (heavy import)
 
 
 class ConfigError(ValueError):
@@ -30,9 +30,9 @@ def _check(ok: bool, msg: str) -> None:
 
 @dataclass(frozen=True)
 class HotkeyConfig:
-    key: str = "ctrl_l"       # tap this key alone to toggle
-    max_hold_s: float = 0.5   # held longer = not a tap
-    cancel_key: str = "esc"   # pressed while recording: discard the recording; "" = off
+    key: str = "ctrl_l" # tap this key alone to toggle
+    max_hold_s: float = 0.5 # held longer = not a tap
+    cancel_key: str = "esc" # pressed while recording: discard the recording; "" = off
 
     def __post_init__(self) -> None:
         for name in ("key", "cancel_key"):
@@ -49,16 +49,16 @@ class HotkeyConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    device: str = "auto"  # "auto"/"gpu": NVIDIA GPU, else Intel iGPU, else CPU | "cuda" | "igpu" | "cpu"
-    gpu_model: str = "auto"  # "auto": NVIDIA large-v3 or -turbo by free VRAM, iGPU -turbo
-    cpu_model: str = "small"           # faster-whisper model on the CPU (fallback)
+    device: str = "auto" # "auto"/"gpu": NVIDIA GPU, else Intel iGPU, else CPU | "cuda" | "igpu" | "cpu"
+    gpu_model: str = "auto" # "auto": NVIDIA large-v3 or -turbo by free VRAM, iGPU -turbo
+    cpu_model: str = "small" # faster-whisper model on the CPU (fallback)
     compute_type: str = "int8"
     cpu_threads: int = 4
-    beam_size: int = 0        # 0 = auto: 5 on an NVIDIA GPU, 1 on the CPU
+    beam_size: int = 0 # 0 = auto: 5 on an NVIDIA GPU, 1 on the CPU
     batch_size: int = 4
-    language: str = ""        # "" = auto-detect (any of Whisper's 99 languages), else e.g. "de"
+    language: str = "" # "" = auto-detect (any of Whisper's 99 languages), else e.g. "de"
     initial_prompt: str = DEFAULT_PROMPT
-    vocabulary: tuple[str, ...] = DEFAULT_VOCABULARY  # words Whisper should spell exactly
+    vocabulary: tuple[str, ...] = DEFAULT_VOCABULARY # words Whisper should spell exactly
 
     def __post_init__(self) -> None:
         _check(self.device in DEVICES, f"[model] device must be one of {sorted(DEVICES)}")
@@ -75,7 +75,7 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class RecordingConfig:
-    stop_after_silence_s: float = 60.0  # forgotten recording: stop, copy the text; 0 = never
+    stop_after_silence_s: float = 60.0 # forgotten recording: stop, copy the text; 0 = never
 
     def __post_init__(self) -> None:
         _check(self.stop_after_silence_s == 0 or 10 <= self.stop_after_silence_s <= 3600,
@@ -84,7 +84,7 @@ class RecordingConfig:
 
 @dataclass(frozen=True)
 class HistoryConfig:
-    keep: int = 5  # last dictations saved locally (tray "Recent dictations"); 0 = off
+    keep: int = 5 # last dictations saved locally (tray "Recent dictations"); 0 = off
 
     def __post_init__(self) -> None:
         _check(0 <= self.keep <= 50, "[history] keep must be 0 (off) to 50")
@@ -92,7 +92,7 @@ class HistoryConfig:
 
 @dataclass(frozen=True)
 class TrayConfig:
-    style: str = "bars"  # tray icon look, animated except "classic" (the original static icon)
+    style: str = "bars" # tray icon look, animated except "classic" (the original static icon)
 
     def __post_init__(self) -> None:
         _check(self.style in TRAY_STYLES, f"[tray] style must be one of {list(TRAY_STYLES)}")
@@ -100,7 +100,7 @@ class TrayConfig:
 
 @dataclass(frozen=True)
 class PillConfig:
-    style: str = "wave"  # status pill animation: "wave", "gradient" (bars) or "classic"
+    style: str = "wave" # status pill animation: "wave", "gradient" (bars) or "classic"
 
     def __post_init__(self) -> None:
         _check(self.style in PILL_STYLES, f"[pill] style must be one of {list(PILL_STYLES)}")
@@ -108,7 +108,7 @@ class PillConfig:
 
 @dataclass(frozen=True)
 class PasteConfig:
-    restore_delay_s: float = 0.3  # wait before restoring the old clipboard
+    restore_delay_s: float = 0.3 # wait before restoring the old clipboard
 
     def __post_init__(self) -> None:
         _check(0 <= self.restore_delay_s <= 5, "[paste] restore_delay_s must be 0–5")
@@ -116,9 +116,9 @@ class PasteConfig:
 
 @dataclass(frozen=True)
 class CommandsConfig:
-    enabled: bool = False  # opt-in: turn on in config.toml
-    trigger: str = "command"  # say "<trigger> new line", "<trigger> bullet", ...
-    bullet: str = "- "        # what "<trigger> bullet" writes at the start of the line
+    enabled: bool = False # opt-in: turn on in config.toml
+    trigger: str = "command" # say "<trigger> new line", "<trigger> bullet", ...
+    bullet: str = "- " # what "<trigger> bullet" writes at the start of the line
 
     def __post_init__(self) -> None:
         _check(re.fullmatch(r"[A-Za-zÄÖÜäöüß]+( [A-Za-zÄÖÜäöüß]+)*", self.trigger) is not None
@@ -131,11 +131,11 @@ class CommandsConfig:
 @dataclass(frozen=True)
 class TranslationConfig:
     enabled: bool = True
-    key: str = "alt_l"        # tap alone: translate the selected text, or the dictation
-    model: str = "auto"  # NVIDIA GPU: nllb-1.3b, CPU: nllb-600m (docs/translation.md)
-    device: str = "auto"      # "auto" = NVIDIA GPU if available, else CPU | "cuda" | "cpu"
+    key: str = "alt_l" # tap alone: translate the selected text, or the dictation
+    model: str = "auto" # NVIDIA GPU: nllb-1.3b, CPU: nllb-600m (docs/translation.md)
+    device: str = "auto" # "auto" = NVIDIA GPU if available, else CPU | "cuda" | "cpu"
     cpu_threads: int = 4
-    my_languages: tuple[str, ...] = ()  # languages the user writes in; () = ask Windows
+    my_languages: tuple[str, ...] = () # languages the user writes in; () = ask Windows
 
     def __post_init__(self) -> None:
         try:
@@ -176,7 +176,7 @@ SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "recording": Recording
             "commands": CommandsConfig, "translation": TranslationConfig}
 
 
-def _build(cls: type, raw: object, section: str):
+def _build(cls: type, raw: object, section: str) -> object:
     """Type-check one [section] against the dataclass defaults and construct it."""
     if not isinstance(raw, dict):
         raise ConfigError(f"[{section}] must be a table")
@@ -187,7 +187,7 @@ def _build(cls: type, raw: object, section: str):
         expected = type(getattr(defaults, key))
         if expected is float and type(value) is int:
             value = float(value)
-        if expected is tuple and type(value) is list:  # TOML arrays -> immutable tuple
+        if expected is tuple and type(value) is list: # TOML arrays -> immutable tuple
             value = tuple(value)
         _check(type(value) is expected,
                f"[{section}] {key}: expected {expected.__name__}, got {value!r}")

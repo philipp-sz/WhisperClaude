@@ -39,8 +39,8 @@ _NOUN_BEFORE = re.compile(
     r"(?:^|[^\w'])(?:the|a|an|this|that|these|those|each|every|any|no|some|another|your|my|our|"
     r"their|his|her|its|which|der|die|das|den|dem|ein|eine|einen|dieser|diese|dieses|jeder|"
     r"jede|jedes|mein|dein|sein|unser)[ \t]+$", re.IGNORECASE)
-_AFTER_BREAK = re.compile(r"[ \t]*[,.;:]?[ \t]*")  # punctuation Whisper put after the command
-_AFTER_OPEN = re.compile(r"\s*[,.;:]?\s*")  # "open quote." -> the period is the command's
+_AFTER_BREAK = re.compile(r"[ \t]*[,.;:]?[ \t]*") # punctuation Whisper put after the command
+_AFTER_OPEN = re.compile(r"\s*[,.;:]?\s*") # "open quote." -> the period is the command's
 _SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
 
 
@@ -67,8 +67,8 @@ def apply_commands(text: str, trigger: str = "command", bullet: str = "- ") -> s
 
     out = ""
     pos = 0
-    in_item = False     # inside a bullet item: it ends at the end of its sentence
-    quote_open = False  # between open quote and close quote: sentence ends there don't count
+    in_item = False # inside a bullet item: it ends at the end of its sentence
+    quote_open = False # between open quote and close quote: sentence ends there don't count
 
     def add(segment: str) -> None:
         nonlocal out, in_item
@@ -84,14 +84,14 @@ def apply_commands(text: str, trigger: str = "command", bullet: str = "- ") -> s
 
     for m in pattern.finditer(text):
         if _NOUN_BEFORE.search(text[:m.start()]):
-            continue  # ordinary sentence about a command: leave the words alone
+            continue # ordinary sentence about a command: leave the words alone
         if m.start() >= pos:
             add(text[pos:m.start()])
         kind = m.lastgroup
         pos = m.end()
         if kind in ("newline", "paragraph", "bullet", "separator"):
             out = out.rstrip(" \t")
-            if out.endswith((",", ";")):  # the pause before the command, not real punctuation
+            if out.endswith((",", ";")): # the pause before the command, not real punctuation
                 out = out[:-1].rstrip(" \t")
             in_item = False
             if kind == "bullet":
@@ -105,26 +105,26 @@ def apply_commands(text: str, trigger: str = "command", bullet: str = "- ") -> s
                 out = out.rstrip("\n") + "\n\n---\n\n" if out.strip("\n") else "---\n\n"
             else:
                 out += "\n"
-            pos = _AFTER_BREAK.match(text, pos).end()  # "new line." -> the period is the command's
+            pos = _AFTER_BREAK.match(text, pos).end() # "new line." -> the period is the command's
         elif kind == "open":
             if out and not out[-1].isspace() and out[-1] not in "([{":
                 out += " "
             out += '"'
             quote_open = True
-            pos = _AFTER_OPEN.match(text, pos).end()  # attach to the next word
-        else:  # close
+            pos = _AFTER_OPEN.match(text, pos).end() # attach to the next word
+        else: # close
             out = out.rstrip(" \t")
             if out.endswith(","):
                 out = out[:-1]
             out += '"'
             quote_open = False
             if out[-2:-1] in (".", "!", "?") and text[pos:pos + 1] == ".":
-                pos += 1  # the command's own period would double the one inside the quote
+                pos += 1 # the command's own period would double the one inside the quote
     add(text[pos:])
 
     lines = out.split("\n")
     for i, line in enumerate(lines):
-        if line.startswith(bullet):  # list items conventionally have no final period
+        if line.startswith(bullet): # list items conventionally have no final period
             line = line.rstrip()
             if line.endswith(".") and not line.endswith(".."):
                 line = line[:-1]

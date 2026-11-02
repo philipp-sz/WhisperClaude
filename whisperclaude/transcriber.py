@@ -16,15 +16,15 @@ import numpy as np
 from faster_whisper import BatchedInferencePipeline, WhisperModel
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 
-from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY, SAMPLE_RATE  # noqa: F401 (re-exported)
+from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY, SAMPLE_RATE # noqa: F401 (re-exported)
 from whisperclaude.textfix import join_chunks
 
 log = logging.getLogger(__name__)
 
-CHUNK_S = 30  # Whisper's window
-LIVE_MARGIN_S = 5  # live transcription leaves the newest audio alone (the VAD may still change it)
-LIVE_MIN_TAIL_S = 15  # ... and only looks for finished chunks once this much is untranscribed
-LEAD_IN_S = 0.5  # silence put before every chunk (see _join)
+CHUNK_S = 30 # Whisper's window
+LIVE_MARGIN_S = 5 # live transcription leaves the newest audio alone (the VAD may still change it)
+LIVE_MIN_TAIL_S = 15 # ... and only looks for finished chunks once this much is untranscribed
+LEAD_IN_S = 0.5 # silence put before every chunk (see _join)
 OV_CACHE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "WhisperClaude" / "ov_cache"
 
 
@@ -39,7 +39,7 @@ def build_prompt(prompt: str | None, vocabulary: Sequence[str] = ()) -> str | No
     return f"{prompt} {words}." if prompt else f"{words}."
 
 
-Detect = Callable[[np.ndarray], str]  # audio -> language code (one cheap encoder pass)
+Detect = Callable[[np.ndarray], str] # audio -> language code (one cheap encoder pass)
 
 
 def _speech_groups(audio: np.ndarray, detect: Detect | None = None, offset: int = 0,
@@ -65,7 +65,7 @@ def _speech_groups(audio: np.ndarray, detect: Detect | None = None, offset: int 
     cache = {} if cache is None else cache
 
     def language(seg: dict) -> str:
-        key = offset + seg["start"]  # not the end: it moves while the passage is still spoken
+        key = offset + seg["start"] # not the end: it moves while the passage is still spoken
         if key not in cache:
             cache[key] = detect(audio[seg["start"]:seg["end"]])
         return cache[key]
@@ -115,8 +115,8 @@ class LiveTranscription:
                  detect: Detect | None = None) -> None:
         self._transcribe_chunks = transcribe_chunks
         self._detect = detect
-        self._languages: dict = {}  # detected once per segment, not on every feed
-        self._done = 0  # samples already transcribed
+        self._languages: dict = {} # detected once per segment, not on every feed
+        self._done = 0 # samples already transcribed
         self._texts: list[str] = []
 
     def _groups(self, tail: np.ndarray, until: int | None = None) -> list[list[dict]]:
@@ -129,7 +129,7 @@ class LiveTranscription:
     def feed(self, audio: np.ndarray) -> None:
         tail = audio[self._done:]
         if len(tail) < LIVE_MIN_TAIL_S * SAMPLE_RATE:
-            return  # not worth a VAD pass yet
+            return # not worth a VAD pass yet
         # Only finished segments; the last group may still be joined by the next one.
         final = self._groups(tail, until=len(tail) - LIVE_MARGIN_S * SAMPLE_RATE)[:-1]
         if final:
@@ -171,13 +171,13 @@ class Transcriber:
         vocabulary: Sequence[str] = (),
     ) -> None:
         self.beam_size = beam_size
-        self.language = language  # None = auto-detect
+        self.language = language # None = auto-detect
         self.initial_prompt = build_prompt(initial_prompt, vocabulary)
         self.batch_size = batch_size
         kwargs = dict(device="cpu", compute_type=compute_type, cpu_threads=cpu_threads)
-        try:  # cached model: no network request at startup (private, works offline)
+        try: # cached model: no network request at startup (private, works offline)
             self.model = WhisperModel(model, local_files_only=True, **kwargs)
-        except Exception:  # first run: download
+        except Exception: # first run: download
             self.model = WhisperModel(model, **kwargs)
         self.pipeline = BatchedInferencePipeline(self.model)
 
@@ -240,7 +240,7 @@ def intel_gpu() -> str | None:
             if (device.startswith("GPU")
                     and "intel" in str(core.get_property(device, "FULL_DEVICE_NAME")).lower()):
                 return device
-    except Exception:  # not installed, driver problem, ...
+    except Exception: # not installed, driver problem, ...
         log.info("OpenVINO GPU check failed", exc_info=True)
     return None
 
@@ -269,7 +269,7 @@ class OpenVinoTranscriber:
         self.language = language
         self.initial_prompt = build_prompt(initial_prompt, vocabulary)
         repo = ov_repo(model)
-        try:  # cached: no network request at startup
+        try: # cached: no network request at startup
             path = snapshot_download(repo, local_files_only=True)
         except Exception:
             on_status("Downloading model (one-time)…")
@@ -311,7 +311,7 @@ class OpenVinoTranscriber:
 
     @property
     def _detect(self) -> Detect | None:
-        return None if self.language else self.detect_language  # fixed language: no need
+        return None if self.language else self.detect_language # fixed language: no need
 
     def transcribe(self, audio: np.ndarray) -> str:
         return self.transcribe_detailed(audio)[0]
@@ -344,10 +344,10 @@ def load_cuda_libraries() -> bool:
     return loaded
 
 
-CUDA_BEAM = 5  # beam_size 0 (auto) on CUDA: fewer errors in all four test sets, +5 % time
-LOW_VRAM_MB = 4096  # less free VRAM: int8 weights (turbo: half the memory, same accuracy)
-LARGE_VRAM_MB = 7000  # model "auto" with this much free: large-v3 (3.9 GB) + room for NLLB
-GPU_MODEL = "large-v3-turbo"  # model "auto" otherwise, and always on the iGPU
+CUDA_BEAM = 5 # beam_size 0 (auto) on CUDA: fewer errors in all four test sets, +5 % time
+LOW_VRAM_MB = 4096 # less free VRAM: int8 weights (turbo: half the memory, same accuracy)
+LARGE_VRAM_MB = 7000 # model "auto" with this much free: large-v3 (3.9 GB) + room for NLLB
+GPU_MODEL = "large-v3-turbo" # model "auto" otherwise, and always on the iGPU
 
 
 def free_vram_mb() -> int | None:
@@ -440,12 +440,12 @@ class CudaTranscriber(OpenVinoTranscriber):
                  free if free is not None else "?")
         self.model_name, self.compute_type = model, compute_type
         kwargs = dict(device="cuda", compute_type=compute_type)
-        try:  # cached model: no network request at startup
+        try: # cached model: no network request at startup
             self.model = WhisperModel(model, local_files_only=True, **kwargs)
         except Exception:
             on_status("Downloading model (one-time)…")
             self.model = WhisperModel(model, **kwargs)
-        silence = np.zeros(SAMPLE_RATE, np.float32)  # CUDA setup + VAD load, see OpenVINO
+        silence = np.zeros(SAMPLE_RATE, np.float32) # CUDA setup + VAD load, see OpenVINO
         speech_chunks(silence)
         self._generate([silence])
 
@@ -473,7 +473,7 @@ def create_transcriber(
     initial_prompt: str | None = DEFAULT_PROMPT,
     vocabulary: Sequence[str] = (),
     beam_size: int = 0,
-    **cpu_kwargs,
+    **cpu_kwargs: object,
 ) -> Transcriber | OpenVinoTranscriber:
     """device "auto" / "gpu": NVIDIA GPU (CUDA) if there is one, else the Intel iGPU
     (OpenVINO), else the CPU. "cuda" / "igpu": only that GPU, else the CPU. "cpu": always

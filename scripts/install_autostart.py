@@ -95,7 +95,7 @@ def revive_xml() -> str:
 
 def register(name: str, xml: str) -> bool:
     xml_path = Path(os.environ.get("TEMP", ROOT)) / f"{name.replace(' ', '_')}.xml"
-    xml_path.write_text(xml, encoding="utf-16")  # Task Scheduler wants UTF-16 with a BOM
+    xml_path.write_text(xml, encoding="utf-16") # Task Scheduler wants UTF-16 with a BOM
     try:
         r = powershell(f"""
 $user = "$env:USERDOMAIN\\$env:USERNAME"
@@ -142,7 +142,7 @@ def main() -> None:
     if not PYTHONW.exists():
         sys.exit(f"{PYTHONW} not found. Create the venv first.")
     if register(TASK, logon_xml()):
-        if LINK.exists():  # replaced by the task
+        if LINK.exists(): # replaced by the task
             LINK.unlink()
         print(f"Installed logon task '{TASK}' -> {PYTHONW.name} -m whisperclaude --autostart")
     else:

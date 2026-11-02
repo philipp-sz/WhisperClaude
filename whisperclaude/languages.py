@@ -9,9 +9,9 @@ from typing import NamedTuple
 
 
 class Language(NamedTuple):
-    code: str    # NLLB code, e.g. "deu_Latn"
-    name: str    # English name
-    native: str  # name in the language itself ("" if the same as the English one)
+    code: str # NLLB code, e.g. "deu_Latn"
+    name: str # English name
+    native: str # name in the language itself ("" if the same as the English one)
 
 
 NLLB_LANGUAGES: tuple[tuple[str, str, str], ...] = (

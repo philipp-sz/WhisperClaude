@@ -22,6 +22,7 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import psutil
 
@@ -41,21 +42,23 @@ from whisperclaude.translation import RecentLanguages, Translation
 from whisperclaude.tray import Tray
 # whisperclaude.transcriber and .translator are imported by the loader thread: they pull in
 # the heavy Whisper stack (ctranslate2, onnxruntime, OpenVINO), which must not delay the UI.
+if TYPE_CHECKING:
+    from whisperclaude.transcriber import OpenVinoTranscriber, Transcriber
 
 log = logging.getLogger("whisperclaude")
-BACKUP_POLL_MS = 1000  # safety net + resume detection; normally the queue wakes Tk itself
+BACKUP_POLL_MS = 1000 # safety net + resume detection; normally the queue wakes Tk itself
 WAKE_EVENT = "<<WhisperClaudeWake>>"
-RESTARTED_FLAG = "--restarted"  # passed by Restart: wait for the old instance to exit
-AUTOSTART_FLAG = "--autostart"  # passed by the logon task: a duplicate start exits silently
-REVIVE_FLAG = "--revive"  # passed by the unlock / wake-from-sleep task: like autostart, but
+RESTARTED_FLAG = "--restarted" # passed by Restart: wait for the old instance to exit
+AUTOSTART_FLAG = "--autostart" # passed by the logon task: a duplicate start exits silently
+REVIVE_FLAG = "--revive" # passed by the unlock / wake-from-sleep task: like autostart, but
                          # it also does nothing after a Quit from the tray
 HEARTBEAT_S = 60
 
 # Events from the model-loader thread (handled via App.handlers)
-LOADED = "loaded"            # payload: transcriber
-LOAD_FAILED = "load_failed"  # payload: error text
-LOAD_STATUS = "load_status"  # payload: text for the start pill ("Preparing GPU…")
-COPIED = "copied"            # payload: feedback after "Copy" (pill button or tray menu)
+LOADED = "loaded" # payload: transcriber
+LOAD_FAILED = "load_failed" # payload: error text
+LOAD_STATUS = "load_status" # payload: text for the start pill ("Preparing GPU…")
+COPIED = "copied" # payload: feedback after "Copy" (pill button or tray menu)
 
 
 def setup_logging() -> Path:
@@ -67,7 +70,7 @@ def setup_logging() -> Path:
         logging.handlers.RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=1,
                                              encoding="utf-8")
     ]
-    if sys.stderr is not None:  # None under pythonw
+    if sys.stderr is not None: # None under pythonw
         handlers.append(logging.StreamHandler())
     logging.basicConfig(level=logging.INFO, handlers=handlers,
                         format="%(asctime)s %(name)s %(levelname)s: %(message)s")
@@ -90,7 +93,7 @@ def single_instance(wait_s: float = 0.0) -> int | None:
     deadline = time.monotonic() + wait_s
     while True:
         handle = _kernel32.CreateMutexW(None, False, "Local\\WhisperClaude")
-        if ctypes.get_last_error() != 183:  # ERROR_ALREADY_EXISTS
+        if ctypes.get_last_error() != 183: # ERROR_ALREADY_EXISTS
             return handle
         _kernel32.CloseHandle(handle)
         if time.monotonic() >= deadline:
@@ -170,11 +173,11 @@ def tell_already_running() -> None:
     "nothing happens", so say so."""
     log.warning("already running, exiting")
     silent = {RESTARTED_FLAG, AUTOSTART_FLAG, REVIVE_FLAG}
-    if sys.stderr is None and not silent.intersection(sys.argv):  # only a manual 2nd launch
+    if sys.stderr is None and not silent.intersection(sys.argv): # only a manual 2nd launch
         ctypes.windll.user32.MessageBoxW(
             0, "WhisperClaude is already running.\n\nLook for the microphone icon in the tray "
                "(under the ^ arrow next to the clock). Right-click it for Restart / Quit.",
-            "WhisperClaude", 0x40 | 0x40000)  # info icon, topmost
+            "WhisperClaude", 0x40 | 0x40000) # info icon, topmost
 
 
 def main() -> None:
@@ -194,7 +197,7 @@ def main() -> None:
     died = lifecycle.previous_instance_died(data_dir)
     if died:
         log.warning("%s", died)
-    lifecycle.clear_user_quit(data_dir)  # a normal start (login, Restart, by hand) ends a Quit
+    lifecycle.clear_user_quit(data_dir) # a normal start (login, Restart, by hand) ends a Quit
     lifecycle.mark_running(data_dir)
 
     config_error = ""
@@ -210,8 +213,8 @@ def main() -> None:
     overlay = Overlay(root, cfg.pill.style)
     events = WakeQueue()
 
-    def request_quit() -> None:  # thread-safe: tray thread, signal handler
-        lifecycle.mark_user_quit(data_dir)  # stays quit across wake/unlock until the next login
+    def request_quit() -> None: # thread-safe: tray thread, signal handler
+        lifecycle.mark_user_quit(data_dir) # stays quit across wake/unlock until the next login
         events.put((QUIT, None))
 
     def request_restart() -> None:
@@ -221,11 +224,11 @@ def main() -> None:
         log.info("quit requested by signal %s", signal.Signals(signum).name)
         request_quit()
 
-    signal.signal(signal.SIGINT, on_signal)  # Ctrl+C in the console
-    if hasattr(signal, "SIGBREAK"):  # Ctrl+Break; also an external "quit" trigger for tests
+    signal.signal(signal.SIGINT, on_signal) # Ctrl+C in the console
+    if hasattr(signal, "SIGBREAK"): # Ctrl+Break; also an external "quit" trigger for tests
         signal.signal(signal.SIGBREAK, on_signal)
 
-    def copy_to_clipboard(text: str) -> None:  # thread-safe: pill (Tk) or tray menu thread
+    def copy_to_clipboard(text: str) -> None: # thread-safe: pill (Tk) or tray menu thread
         try:
             copy_text(text)
             log.info("copied a dictation from the history (%d characters)", len(text))
@@ -241,7 +244,7 @@ def main() -> None:
     tray.start()
 
     def remember(text: str, translation: str = "", target: str = "", note: str = "",
-                 update: bool = False) -> None:  # worker thread
+                 update: bool = False) -> None: # worker thread
         history.add(text, translation, target, note, update)
         tray.refresh()
 
@@ -260,7 +263,7 @@ def main() -> None:
     cmd = cfg.commands
     postprocess = ((lambda text: apply_commands(text, cmd.trigger, cmd.bullet))
                    if cmd.enabled else None)
-    app = App(recorder, None, paste, events, on_state, postprocess,  # starts in State.LOADING
+    app = App(recorder, None, paste, events, on_state, postprocess, # starts in State.LOADING
               stop_after_silence_s=cfg.recording.stop_after_silence_s,
               remember=remember,
               on_pasted=lambda text: (overlay.show_pasted(lambda: copy_to_clipboard(text)),
@@ -276,9 +279,9 @@ def main() -> None:
     log.info("UI, tray and hotkey up %.1f s after process start; loading the model",
              time.time() - psutil.Process().create_time())
 
-    def on_loaded(transcriber) -> None:
+    def on_loaded(transcriber: Transcriber | OpenVinoTranscriber) -> None:
         app.set_transcriber(transcriber)
-        device = transcriber.device  # "CUDA", "GPU" / "GPU.1" (OpenVINO, Intel) or "CPU"
+        device = transcriber.device # "CUDA", "GPU" / "GPU.1" (OpenVINO, Intel) or "CPU"
         tray.engine = ("NVIDIA GPU" if device == "CUDA" else
                        "iGPU" if device.startswith("GPU") else "CPU")
         tray.set_state(State.IDLE)
@@ -289,9 +292,9 @@ def main() -> None:
         log.info("ready (%s on %s, hotkey %s)", type(transcriber).__name__, transcriber.device,
                  cfg.hotkey.key)
 
-    def on_load_failed(message) -> None:
+    def on_load_failed(message: object) -> None:
         overlay.show_message("Could not load the model (see log)", seconds=None)
-        root.after(5000, lambda: events.put((QUIT, None)))  # not a user Quit: may be revived
+        root.after(5000, lambda: events.put((QUIT, None))) # not a user Quit: may be revived
 
     app.handlers = {
         LOADED: on_loaded,
@@ -317,7 +320,7 @@ def main() -> None:
         def finish() -> None:
             lifecycle.mark_clean_exit(data_dir)
             if restart:
-                release_instance(mutex)  # let the new instance take over
+                release_instance(mutex) # let the new instance take over
                 spawn_new_instance()
             root.destroy()
 

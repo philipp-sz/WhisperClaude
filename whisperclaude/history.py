@@ -34,11 +34,11 @@ def preview(text: str, width: int = 42) -> str:
 
 @dataclass(frozen=True)
 class Entry:
-    time: float  # Unix time
-    text: str  # what was dictated (or selected)
-    translation: str = ""  # its translation, if it was translated
-    target: str = ""  # NLLB code of the translation's language, e.g. "fra_Latn"
-    note: str = ""  # "cancelled" / "not pasted"; "" = pasted
+    time: float # Unix time
+    text: str # what was dictated (or selected)
+    translation: str = "" # its translation, if it was translated
+    target: str = "" # NLLB code of the translation's language, e.g. "fra_Latn"
+    note: str = "" # "cancelled" / "not pasted"; "" = pasted
 
     def preview(self, width: int = 42) -> str:
         return preview(self.text, width)
@@ -62,7 +62,7 @@ class History:
         self._lock = threading.Lock()
         self._entries: list[Entry] = []
         if keep <= 0:
-            self.path.unlink(missing_ok=True)  # turned off: don't leave old dictations behind
+            self.path.unlink(missing_ok=True) # turned off: don't leave old dictations behind
             return
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))

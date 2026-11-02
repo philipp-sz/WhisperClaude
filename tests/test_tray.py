@@ -35,11 +35,11 @@ def test_click_copies_that_dictation_and_clear_empties_it(tmp_path):
     labels = texts(items)
     assert labels[0] == "Click to copy"
     assert labels[1].startswith("zweites Diktat\t") and labels[2].startswith("erstes Diktat\t")
-    assert items[1].default and not items[2].default  # the newest is shown in bold
-    items[2](tray.icon)  # click "erstes Diktat"
+    assert items[1].default and not items[2].default # the newest is shown in bold
+    items[2](tray.icon) # click "erstes Diktat"
     assert copied == ["erstes Diktat"]
     texts_after = tray._recent_items()
-    texts_after[-1](tray.icon)  # "Clear history"
+    texts_after[-1](tray.icon) # "Clear history"
     assert history.entries() == []
 
 
@@ -60,20 +60,20 @@ def test_menu_is_never_rebuilt_while_it_is_open(monkeypatch, tmp_path):
 
     builds, seen_while_open = [], []
 
-    def menu_open(icon, wparam, lparam):  # stands in for pystray showing the menu
-        other = threading.Thread(target=tray.refresh)  # e.g. a dictation finished meanwhile
+    def menu_open(icon, wparam, lparam): # stands in for pystray showing the menu
+        other = threading.Thread(target=tray.refresh) # e.g. a dictation finished meanwhile
         other.start()
         other.join()
-        icon.update_menu()  # pystray rebuilds after every click
+        icon.update_menu() # pystray rebuilds after every click
         seen_while_open.append(len(builds))
 
     monkeypatch.setattr(win.Icon, "_on_notify", menu_open)
     monkeypatch.setattr(win.Icon, "_update_menu", lambda icon: builds.append(1))
     tray, _, _ = make_tray(tmp_path)
-    tray.icon._message_handlers[WM_NOTIFY](0, 0x205)  # right-click
-    assert seen_while_open == [0] and len(builds) == 1  # deferred, then rebuilt once
+    tray.icon._message_handlers[WM_NOTIFY](0, 0x205) # right-click
+    assert seen_while_open == [0] and len(builds) == 1 # deferred, then rebuilt once
     tray.refresh()
-    assert len(builds) == 2  # menu closed: rebuilds happen right away again
+    assert len(builds) == 2 # menu closed: rebuilds happen right away again
 
 
 # ---------- animated icon ----------
@@ -95,16 +95,16 @@ def test_frames_follow_state_voice_and_paste():
     from whisperclaude import tray as t
 
     class FakeIcon:
-        _hwnd = None  # never shown: nothing is pushed
+        _hwnd = None # never shown: nothing is pushed
 
     anim = t._Animator(FakeIcon(), "bars", level_fn=lambda: 1.0)
     try:
         now = anim._since
         assert anim._frame_key(now)[0] == "loading"
         anim.set("recording")
-        assert anim._frame_key(anim._since + 0.05) == ("recording", 0, 9)  # loud voice
+        assert anim._frame_key(anim._since + 0.05) == ("recording", 0, 9) # loud voice
         anim.set("idle")
-        assert anim._frame_key(anim._since) == ("idle", 0, 0)  # idle: one still frame
+        assert anim._frame_key(anim._since) == ("idle", 0, 0) # idle: one still frame
         anim.flash_pasted()
         assert anim._frame_key(anim._flash_since + 0.1)[0] == "pasted"
         assert anim._frame_key(anim._flash_since + t.PASTED_FLASH_S + 0.1)[0] == "idle"
@@ -113,7 +113,7 @@ def test_frames_follow_state_voice_and_paste():
 
 
 def test_classic_style_has_no_animation(tmp_path):
-    tray, _, _ = make_tray(tmp_path)  # make_tray uses the default style: classic
+    tray, _, _ = make_tray(tmp_path) # make_tray uses the default style: classic
     assert tray._animator is None
 
 

@@ -10,7 +10,7 @@ def test_keeps_the_newest_entries_and_survives_a_restart(tmp_path):
         h.add(text)
     assert [e.text for e in h.entries()] == ["vier", "drei", "zwei"]
     assert h.latest().text == "vier"
-    again = History(tmp_path, keep=3)  # e.g. after an app restart
+    again = History(tmp_path, keep=3) # e.g. after an app restart
     assert [e.text for e in again.entries()] == ["vier", "drei", "zwei"]
 
 
@@ -45,7 +45,7 @@ def test_menu_preview_and_time():
     assert short.preview() == "Kurzer Text." and short.when() == time.strftime("%H:%M")
     long = Entry(now, "Ich glaube, ich würde es jetzt auch ein bisschen anders machen.\n" * 200)
     assert long.preview().endswith("…") and "\n" not in long.preview()
-    assert long.when().endswith("· 12k")  # 12,800 characters: easy to spot in the menu
+    assert long.when().endswith("· 12k") # 12,800 characters: easy to spot in the menu
     old = Entry(now - 3 * 86400, "Alt")
     assert old.when() == time.strftime("%d.%m. %H:%M", time.localtime(old.time))
 
@@ -53,12 +53,12 @@ def test_menu_preview_and_time():
 def test_a_translation_joins_its_dictation_and_survives_a_restart(tmp_path):
     h = History(tmp_path)
     h.add("erstes")
-    h.add("hallo welt")  # saved before the translation
+    h.add("hallo welt") # saved before the translation
     h.add("hallo welt", "bonjour le monde", "fra_Latn", update=True)
     first, second = h.entries()
     assert (first.text, first.translation, first.target) == ("hallo welt", "bonjour le monde", "fra_Latn")
     assert second.text == "erstes" and second.translation == ""
-    h.add("Auswahl", "Selection", "eng_Latn")  # a translated selection: a new entry
+    h.add("Auswahl", "Selection", "eng_Latn") # a translated selection: a new entry
     assert [e.text for e in h.entries()] == ["Auswahl", "hallo welt", "erstes"]
     again = History(tmp_path)
     assert again.entries() == h.entries()
@@ -72,7 +72,7 @@ def test_reads_a_history_file_from_before_translations(tmp_path):
 def test_kept_dictations_carry_a_note_and_only_update_merges(tmp_path):
     h = History(tmp_path)
     h.add("ok")
-    h.add("ok", note="cancelled")  # the same words again, Esc'ed: a new entry
-    h.add("ok", note="not pasted", update=True)  # follow-up of that dictation
+    h.add("ok", note="cancelled") # the same words again, Esc'ed: a new entry
+    h.add("ok", note="not pasted", update=True) # follow-up of that dictation
     assert [(e.text, e.note) for e in h.entries()] == [("ok", "not pasted"), ("ok", "")]
     assert [e.note for e in History(tmp_path).entries()] == ["not pasted", ""]

@@ -74,7 +74,7 @@ def test_recent_languages(tmp_path):
         recent.add(code)
     assert recent.codes == ["deu_Latn", "bogus", "eng_Latn", "fra_Latn"]
     reloaded = RecentLanguages(path)
-    assert reloaded.codes == ["deu_Latn", "eng_Latn", "fra_Latn"]  # unknown codes dropped
+    assert reloaded.codes == ["deu_Latn", "eng_Latn", "fra_Latn"] # unknown codes dropped
     path.write_text("not json", encoding="utf-8")
     assert RecentLanguages(path).codes == []
 
@@ -83,10 +83,10 @@ def test_recent_languages(tmp_path):
     ("ok", "Okay , that 's all right .", "eng_Latn", "Okay, that's all right."),
     ("Ja", "- Yes , I did .", "eng_Latn", "Yes, I did."),
     ("Nein", "I do n't know .", "eng_Latn", "I don't know."),
-    ("Danke", "Merci !", "fra_Latn", "Merci !"),          # French typography stays
+    ("Danke", "Merci !", "fra_Latn", "Merci !"), # French typography stays
     ("Danke", "Gracias , amigo !", "spa_Latn", "Gracias, amigo!"),
     ("- Punkt eins", "- Point one", "eng_Latn", "- Point one"),
-    ("Pi ist 3,14.", "Pi is 3 .14.", "eng_Latn", "Pi is 3 .14."),  # decimals untouched
+    ("Pi ist 3,14.", "Pi is 3 .14.", "eng_Latn", "Pi is 3 .14."), # decimals untouched
     ("Ein normaler Satz.", "A normal sentence, isn't it?", "eng_Latn",
      "A normal sentence, isn't it?"),
 ])
@@ -97,9 +97,9 @@ def test_tidy(source, text, target, expected):
 def test_detect_text_prefers_the_users_languages():
     from whisperclaude.translator import LanguageDetector
     d = LanguageDetector(preferred=["de", "en"])
-    assert d.detect_text("ok") == "deu_Latn"            # no signal: the first preferred
+    assert d.detect_text("ok") == "deu_Latn" # no signal: the first preferred
     assert d.detect_text("Meeting") == "eng_Latn"
-    assert d.detect_text("Merci beaucoup") == "fra_Latn"  # clear enough on its own
+    assert d.detect_text("Merci beaucoup") == "fra_Latn" # clear enough on its own
     assert d.detect_text("Ich komme später nach Hause.") == "deu_Latn"
 
 
@@ -112,7 +112,7 @@ def test_translation_waits_for_the_model(monkeypatch):
         def translate(self, text, target, source=None):
             return f"{target}:{text}"
 
-    t = tr.Translation.__new__(tr.Translation)  # no picker / Tk needed for this part
+    t = tr.Translation.__new__(tr.Translation) # no picker / Tk needed for this part
     t._translator, t._error, t._loaded = None, "", threading.Event()
     monkeypatch.setattr(tr, "LOAD_TIMEOUT_S", 0.05)
     with pytest.raises(RuntimeError, match="still loading"):
@@ -129,7 +129,7 @@ def test_own_languages_from_the_config_beat_windows(monkeypatch):
     import whisperclaude.translator as translator
 
     monkeypatch.setattr(translator, "user_languages", lambda: ["en"])
-    assert translator.LanguageDetector().preferred == ["en"]  # nothing configured: Windows
+    assert translator.LanguageDetector().preferred == ["en"] # nothing configured: Windows
     assert translator.LanguageDetector().detect_text("Bis morgen") == "eng_Latn"
     configured = translator.LanguageDetector(["de", "en"])
     assert configured.detect_text("Bis morgen") == "deu_Latn"
@@ -139,14 +139,14 @@ def test_own_languages_from_the_config_beat_windows(monkeypatch):
 def test_picked_source_is_used_except_for_sentences_already_in_the_target():
     from whisperclaude.translator import LanguageDetector, Translator
 
-    t = Translator.__new__(Translator)  # no model needed for choosing the source languages
+    t = Translator.__new__(Translator) # no model needed for choosing the source languages
     t.detector = LanguageDetector(["en"])
     sentences = ["Danke", "Kein Problem", "This sentence is clearly written in English."]
-    assert t._sources(sentences, None, "eng_Latn")[:2] == ["eng_Latn", "eng_Latn"]  # wrong
+    assert t._sources(sentences, None, "eng_Latn")[:2] == ["eng_Latn", "eng_Latn"] # wrong
     assert t._sources(sentences, "deu_Latn", "eng_Latn") == ["deu_Latn", "deu_Latn", "eng_Latn"]
     text = ("Das ist ein ganz normaler deutscher Satz. Noch ein deutscher Satz mit Inhalt. "
             "This one is an English sentence for sure.")
-    assert t.guess(text) == ["deu_Latn", "eng_Latn"]  # most sentences first
+    assert t.guess(text) == ["deu_Latn", "eng_Latn"] # most sentences first
 
 
 def test_recent_sources_and_own_languages(tmp_path):
@@ -159,5 +159,5 @@ def test_recent_sources_and_own_languages(tmp_path):
     assert again.codes == ["fra_Latn"] and again.sources == ["deu_Latn"]
     t = tr.Translation.__new__(tr.Translation)
     t._translator, t.my_languages = None, ("es", "en")
-    assert t.own_sources() == ["spa_Latn", "eng_Latn"]  # from the config until loaded
-    assert t.guess("Hola") == []  # nothing detected while the model loads
+    assert t.own_sources() == ["spa_Latn", "eng_Latn"] # from the config until loaded
+    assert t.guess("Hola") == [] # nothing detected while the model loads

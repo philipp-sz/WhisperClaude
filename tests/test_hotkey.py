@@ -15,7 +15,7 @@ def tap():
 
 def press_release(d, hold=0.1, key=Key.ctrl_l, between=None):
     d.press(key)
-    d.press(key)  # auto-repeat while held
+    d.press(key) # auto-repeat while held
     if between:
         between(d)
     d.clock_value[0] += hold
@@ -24,13 +24,13 @@ def press_release(d, hold=0.1, key=Key.ctrl_l, between=None):
 
 def test_short_tap_triggers(tap):
     assert press_release(tap) is True
-    assert press_release(tap) is True  # and again
+    assert press_release(tap) is True # and again
 
 
 @pytest.mark.parametrize("between", [
-    lambda d: (d.press(KeyCode.from_char("c")), d.release(KeyCode.from_char("c"))),  # Ctrl+C
-    lambda d: d.press(Key.alt_gr),  # AltGr sends Ctrl+Alt on German layouts
-    lambda d: d.interrupt(),        # mouse click / scroll while held
+    lambda d: (d.press(KeyCode.from_char("c")), d.release(KeyCode.from_char("c"))), # Ctrl+C
+    lambda d: d.press(Key.alt_gr), # AltGr sends Ctrl+Alt on German layouts
+    lambda d: d.interrupt(), # mouse click / scroll while held
 ])
 def test_combinations_do_not_trigger(tap, between):
     assert press_release(tap, between=between) is False
@@ -66,7 +66,7 @@ def alt_filter():
     clock, taps, sent = [0.0], [], []
 
     def suppress():
-        raise Suppressed  # like pynput's suppress_event()
+        raise Suppressed # like pynput's suppress_event()
 
     f = TranslateKeyFilter(0xA4, 0.5, lambda: taps.append(1), suppress, clock=lambda: clock[0],
                            send=lambda *a: sent.append(a))
@@ -75,23 +75,23 @@ def alt_filter():
 
 def test_alt_tap_is_swallowed_and_replayed(alt_filter):
     f, clock, taps, sent = alt_filter
-    assert f(WM_SYSKEYDOWN, KeyData(0xA4)) is True  # the press goes through
+    assert f(WM_SYSKEYDOWN, KeyData(0xA4)) is True # the press goes through
     clock[0] += 0.1
     with pytest.raises(Suppressed):
-        f(0x101, KeyData(0xA4, flags=0x80))  # WM_KEYUP
+        f(0x101, KeyData(0xA4, flags=0x80)) # WM_KEYUP
     assert taps == [1] and sent == [(0xA4, 0x38, 0x80)]
 
 
 def test_alt_combinations_pass_through(alt_filter):
     f, clock, taps, sent = alt_filter
     f(WM_SYSKEYDOWN, KeyData(0xA4))
-    f(WM_SYSKEYDOWN, KeyData(0x09))  # Alt+Tab
+    f(WM_SYSKEYDOWN, KeyData(0x09)) # Alt+Tab
     assert f(0x101, KeyData(0xA4)) is True
     f(WM_SYSKEYDOWN, KeyData(0xA4))
-    f.interrupt()  # Alt+click
+    f.interrupt() # Alt+click
     assert f(0x101, KeyData(0xA4)) is True
     f(WM_SYSKEYDOWN, KeyData(0xA4))
-    clock[0] += 1.0  # held too long
+    clock[0] += 1.0 # held too long
     assert f(0x101, KeyData(0xA4)) is True
     assert taps == [] and sent == []
 
@@ -99,17 +99,17 @@ def test_alt_combinations_pass_through(alt_filter):
 def test_own_events_are_ignored(alt_filter):
     f, clock, taps, sent = alt_filter
     f(WM_SYSKEYDOWN, KeyData(0xA4))
-    f(WM_KEYDOWN, KeyData(0xE8, flags=0x10, extra=OWN_EVENT))  # our mask key: no interruption
+    f(WM_KEYDOWN, KeyData(0xE8, flags=0x10, extra=OWN_EVENT)) # our mask key: no interruption
     with pytest.raises(Suppressed):
         f(0x101, KeyData(0xA4))
-    assert f(0x101, KeyData(0xA4, flags=0x10, extra=OWN_EVENT)) is True  # our replay passes
+    assert f(0x101, KeyData(0xA4, flags=0x10, extra=OWN_EVENT)) is True # our replay passes
     assert taps == [1]
 
 
 def test_unmasked_key_tap_is_not_swallowed():
     taps = []
     f = TranslateKeyFilter(0x78, 0.5, lambda: taps.append(1), lambda: 1 / 0, clock=lambda: 0.0)
-    f(WM_KEYDOWN, KeyData(0x78))  # F9: nothing to mask
+    f(WM_KEYDOWN, KeyData(0x78)) # F9: nothing to mask
     assert f(0x101, KeyData(0x78)) is True and taps == [1]
 
 
@@ -117,7 +117,7 @@ def test_filter_errors_never_escape(alt_filter):
     f, clock, taps, sent = alt_filter
     f.send = lambda *a: 1 / 0
     f(WM_SYSKEYDOWN, KeyData(0xA4))
-    assert f(0x101, KeyData(0xA4)) is True  # an exception would stop pynput's listener
+    assert f(0x101, KeyData(0xA4)) is True # an exception would stop pynput's listener
 
 
 def test_key_vk():

@@ -5,15 +5,20 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from whisperclaude.inserter import capture_selection
 from whisperclaude.languages import BY_CODE, SOURCE_CODES
 from whisperclaude.picker import Choice, LanguagePicker
 
+if TYPE_CHECKING:  # heavy: loaded by the model loader, not on the UI path
+    from whisperclaude.translator import Translator
+
 log = logging.getLogger(__name__)
 KEEP_RECENT = 5
-LOAD_TIMEOUT_S = 30  # loading takes 2-5 s; the first start downloads ~0.6 GB first
+LOAD_TIMEOUT_S = 30 # loading takes 2-5 s; the first start downloads ~0.6 GB first
 
 
 class RecentLanguages:
@@ -63,7 +68,7 @@ class Translation:
         self._loaded = threading.Event()
 
     # model loader thread
-    def set_translator(self, translator) -> None:
+    def set_translator(self, translator: Translator) -> None:
         self._translator = translator
         self._loaded.set()
 
@@ -92,7 +97,8 @@ class Translation:
             log.exception("language detection failed")
             return []
 
-    def pick(self, on_done, dictation: bool = False, guess: list[str] | tuple[str, ...] = ()) -> None:
+    def pick(self, on_done: Callable[[Choice | None, bool], None], dictation: bool = False,
+             guess: list[str] | tuple[str, ...] = ()) -> None:
         def done(choice: Choice | None, focus_back: bool) -> None:
             if choice is not None:
                 self.recent.add(choice[0])

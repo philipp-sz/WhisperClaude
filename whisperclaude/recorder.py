@@ -25,13 +25,14 @@ class Recorder:
         self._chunks: list[np.ndarray] = []
         self._lock = threading.Lock()
         self._stream: sd.InputStream | None = None
-        self.level = 0.0  # RMS of the latest audio block, for the overlay's level bars
+        self.level = 0.0 # RMS of the latest audio block, for the overlay's level bars
 
     @property
     def is_recording(self) -> bool:
         return self._stream is not None
 
-    def _callback(self, indata: np.ndarray, frames: int, time, status: sd.CallbackFlags) -> None:
+    def _callback(self, indata: np.ndarray, frames: int, time: object,
+                  status: sd.CallbackFlags) -> None:
         if status:
             log.warning("audio status: %s", status)
         block = indata[:, 0].copy()

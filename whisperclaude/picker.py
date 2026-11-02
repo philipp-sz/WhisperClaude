@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import ctypes
 import tkinter as tk
+from collections.abc import Callable
 from tkinter import font as tkfont
-from typing import Callable
 
 from whisperclaude.languages import BY_CODE, Language, search
 from whisperclaude.overlay import _work_area
@@ -27,7 +27,7 @@ SELECT = "#1a73e8"
 ROWS = 8
 AUTO = "Auto-detect"
 
-Choice = tuple[str, str | None]  # (target, source or None = auto-detect)
+Choice = tuple[str, str | None] # (target, source or None = auto-detect)
 
 
 def _force_foreground(hwnd: int) -> None:
@@ -69,8 +69,8 @@ class LanguagePicker:
         self._source: str | None = None
         self._guess: list[str] = []
         self._hint = ""
-        self._shown: list[Language | None] = []  # None: the "Auto-detect" row
-        self._previous = 0  # the window to give the focus back to
+        self._shown: list[Language | None] = [] # None: the "Auto-detect" row
+        self._previous = 0 # the window to give the focus back to
         self._hwnd = 0
         self._build()
 
@@ -122,7 +122,7 @@ class LanguagePicker:
                         ("<Prior>", lambda e: self._move(-ROWS))):
             self.entry.bind(key, fn)
         self.list.bind("<ButtonRelease-1>", lambda e: self._click(e))
-        self.list.bind("<MouseWheel>", lambda e: None)  # Listbox scrolls by itself
+        self.list.bind("<MouseWheel>", lambda e: None) # Listbox scrolls by itself
         self.win.bind("<FocusOut>", lambda e: self.root.after(150, self._check_focus))
 
     @property
@@ -145,7 +145,7 @@ class LanguagePicker:
         self._target = targets[0].code if targets else None
         self._source = None
         self._mode = "to"
-        self.query.set("")  # refreshes the list (a write trace)
+        self.query.set("") # refreshes the list (a write trace)
         self._place()
         self.win.deiconify()
         self.win.lift()
@@ -178,7 +178,7 @@ class LanguagePicker:
         """Centered above the pill, i.e. near the bottom of the primary work area."""
         s = self.scale
         width = round(380 * s)
-        self.win.geometry(f"{width}x1")  # height follows the content
+        self.win.geometry(f"{width}x1") # height follows the content
         self.win.update_idletasks()
         height = self.win.winfo_reqheight()
         left, _, right, bottom = _work_area()
@@ -239,8 +239,8 @@ class LanguagePicker:
     def _switch(self, mode: str) -> str:
         if mode != self._mode:
             self._mode = mode
-            self.query.set("")  # refreshes the list, with the current choice highlighted
-        return "break"  # Tab: keep the focus in the search box
+            self.query.set("") # refreshes the list, with the current choice highlighted
+        return "break" # Tab: keep the focus in the search box
 
     def _enter(self) -> None:
         if self._mode == "from":
@@ -259,7 +259,7 @@ class LanguagePicker:
             selection = self.list.curselection()
             self._select(min(len(self._shown) - 1,
                              max(0, (selection[0] if selection else 0) + step)))
-        return "break"  # keep the cursor in the search box
+        return "break" # keep the cursor in the search box
 
     def _click(self, event: tk.Event) -> None:
         i = self.list.nearest(event.y)

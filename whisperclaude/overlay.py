@@ -18,9 +18,9 @@ import math
 import time
 import tkinter as tk
 from collections import deque
+from collections.abc import Callable
 from ctypes import wintypes
 from tkinter import font as tkfont
-from typing import Callable
 
 import numpy as np
 from PIL import Image, ImageTk
@@ -38,7 +38,7 @@ SPI_GETWORKAREA = 0x0030
 HWND_TOPMOST = ctypes.c_void_p(-1)
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0010, 0x0040
 
-KEY = "#ff00fe"  # transparent color key (corners outside the pill)
+KEY = "#ff00fe" # transparent color key (corners outside the pill)
 BG = "#202124"
 FG = "#ffffff"
 GREY = "#9aa0a6"
@@ -48,15 +48,15 @@ AMBER = "#f5a623"
 BLUE = "#4c8bf5"
 BUTTON, BUTTON_HOVER = "#3c4043", "#5f6368"
 # The Copy button of the wave and gradient styles: outlined, filled on hover.
-OUTLINED, OUTLINED_HOVER = ("#2a2b2f", "#4a4d53"), ("#3c4043", "#6b6f76")  # (fill, border)
-PASTED_S = 5.0  # how long the pill offers "Copy" after a paste
-KEPT_S = 8.0  # ... and after a dictation that was kept, not pasted
+OUTLINED, OUTLINED_HOVER = ("#2a2b2f", "#4a4d53"), ("#3c4043", "#6b6f76") # (fill, border)
+PASTED_S = 5.0 # how long the pill offers "Copy" after a paste
+KEPT_S = 8.0 # ... and after a dictation that was kept, not pasted
 ALPHA = 0.92
 MESSAGE_S = 2.5
 FRAME_MS = 33
 FADE_MS = 150
 N_BARS = 16
-N_WAVE = 36  # level history the waves show (~1.2 s)
+N_WAVE = 36 # level history the waves show (~1.2 s)
 STYLES = ("wave", "gradient", "classic")
 CLASSIC_COLORS = {"recording": RED, "transcribing": AMBER, "translating": BLUE}
 # Badges of the wave and gradient styles: kind -> (palette, symbol); "loading" is a spinner.
@@ -77,7 +77,7 @@ def message_kind(text: str) -> str:
 def enable_dpi_awareness() -> None:
     """Crisp text on scaled displays. Must run before tk.Tk() is created."""
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # system DPI aware
+        ctypes.windll.shcore.SetProcessDpiAwareness(1) # system DPI aware
     except (AttributeError, OSError):
         pass
 
@@ -101,15 +101,15 @@ class LevelMeter:
     at least 15 dB, so silence stays flat. Call once per frame.
     """
 
-    LOUD_DB = -20.0  # full height without any gain
-    FOLLOW = 0.75  # how far the top of the scale follows a quieter peak
+    LOUD_DB = -20.0 # full height without any gain
+    FOLLOW = 0.75 # how far the top of the scale follows a quieter peak
     MIN_RANGE_DB = 15.0
 
     def __init__(self, fps: float = 1000 / FRAME_MS) -> None:
-        self.peak = -45.0  # assume a quiet mic: a loud one corrects it with its first word
+        self.peak = -45.0 # assume a quiet mic: a loud one corrects it with its first word
         self.noise = -60.0
-        self._fall, self._rise = 5.0 / fps, 0.3 / fps  # dB per frame
-        self.unit = 0.0  # the latest result (the tray icon reads it from its own thread)
+        self._fall, self._rise = 5.0 / fps, 0.3 / fps # dB per frame
+        self.unit = 0.0 # the latest result (the tray icon reads it from its own thread)
 
     def __call__(self, rms: float) -> float:
         db = 20 * math.log10(max(rms, 1e-6))
@@ -161,21 +161,21 @@ class Overlay:
         self.art_w = round(96 * s) if style == "wave" else self.bars_w
         self.art_h = self.h - 2 * round(4 * s)
         self.badge_size = round(20 * s)
-        self._badge: ImageTk.PhotoImage | None = None  # the start pill's spinner, then check
-        self._images: list[ImageTk.PhotoImage] = []  # shown images; Tk keeps no reference
+        self._badge: ImageTk.PhotoImage | None = None # the start pill's spinner, then check
+        self._images: list[ImageTk.PhotoImage] = [] # shown images; Tk keeps no reference
         self.canvas = tk.Canvas(root, bg=KEY, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
         self._bg = [self.canvas.create_oval(0, 0, 0, 0, fill=BG, outline=""),
                     self.canvas.create_oval(0, 0, 0, 0, fill=BG, outline=""),
                     self.canvas.create_rectangle(0, 0, 0, 0, fill=BG, outline="")]
 
-        self.level_fn: Callable[[], float] = lambda: 0.0  # set to the recorder's level
-        self.meter = LevelMeter()  # new one per recording; .unit is the shown level
+        self.level_fn: Callable[[], float] = lambda: 0.0 # set to the recorder's level
+        self.meter = LevelMeter() # new one per recording; .unit is the shown level
         self._jobs: dict[str, str] = {}
         self._frame_fn: Callable[[float], bool | None] | None = None
         self._t0 = 0.0
         self._alpha = 0.0
-        self._hwnd = 0  # real top-level window handle, set by _no_activate()
+        self._hwnd = 0 # real top-level window handle, set by _no_activate()
         self._w = self.h
         self._dot: int | None = None
         self._label: int | None = None
@@ -254,7 +254,7 @@ class Overlay:
     def _fade(self, target: float, ms: int = FADE_MS,
               then: Callable[[], None] | None = None) -> None:
         self._cancel("fade")
-        if target > 0:  # about to be shown
+        if target > 0: # about to be shown
             self._raise_topmost()
         start, t0 = self._alpha, time.monotonic()
 
@@ -369,7 +369,7 @@ class Overlay:
     def _set_bar(self, item: int, i: int, x0: float, v: float) -> None:
         x = x0 + i * (self.bar_w + self.bar_gap) + self.bar_w / 2
         half = (self.bar_min + (self.bar_max - self.bar_min) * v) / 2 - self.bar_w / 2
-        half = max(half, 0.5)  # round caps add bar_w/2 at each end
+        half = max(half, 0.5) # round caps add bar_w/2 at each end
         self.canvas.coords(item, x, self.h / 2 - half, x, self.h / 2 + half)
 
     # ---------- states ----------
@@ -406,7 +406,7 @@ class Overlay:
         art = self.style != "classic"
         tx = self._text_x()
         kind = message_kind(label)
-        if art:  # a gradient badge whose symbol draws itself
+        if art: # a gradient badge whose symbol draws itself
             badge = self._make_badge()
         else:
             dot = self._make_dot(GREEN if kind == "ok" else GREY)
@@ -573,7 +573,7 @@ class Overlay:
             if badge is not None:
                 self._paint_badge(badge, "ok", *self._pop(t))
                 return False if t >= 0.45 else None
-            pop = 1 + 0.5 * math.sin(math.pi * p)  # grows to 1.5x and back
+            pop = 1 + 0.5 * math.sin(math.pi * p) # grows to 1.5x and back
             self._place_dot(dot, self.dot_d / 2 * pop)
             return False if p >= 1 else None
 
@@ -601,7 +601,7 @@ class Overlay:
             if badge is not None:
                 grow = 1.0 if t < 0.6 else max(0.0, 1 - (t - 0.6) / 0.35)
                 self._paint_badge(badge, kind, grow, t=t)
-            if t < 0.6:  # hold so the text can be read
+            if t < 0.6: # hold so the text can be read
                 return None
             p = min(1.0, (t - 0.6) / 0.35)
             self.canvas.itemconfig(label, fill=_mix(FG, BG, p * 2))
@@ -618,7 +618,7 @@ class Overlay:
     def set_state(self, state: State, msg: str = "") -> None:
         """App.on_state callback."""
         if state is State.LOADING:
-            if msg:  # a tap while the model loads: the start pill says what's going on
+            if msg: # a tap while the model loads: the start pill says what's going on
                 self.set_starting_text(msg)
         elif state is State.RECORDING:
             self.show_recording()
@@ -626,7 +626,7 @@ class Overlay:
             self.show_transcribing()
         elif state is State.TRANSLATING:
             self.show_transcribing("Translating…", "translating")
-        elif msg:  # longer messages stay longer (~13 characters per second, at least 2.5 s)
+        elif msg: # longer messages stay longer (~13 characters per second, at least 2.5 s)
             self.show_message(msg, max(MESSAGE_S, len(msg) * 0.075))
         else:
             self.hide()

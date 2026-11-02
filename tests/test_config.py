@@ -22,9 +22,9 @@ def test_valid_overrides(tmp_path):
     cfg = load_config(write(tmp_path, '[hotkey]\nkey = "f9"\nmax_hold_s = 1\n'
                                       '[model]\nlanguage = "de"\n'))
     assert cfg.hotkey.key == "f9"
-    assert cfg.hotkey.max_hold_s == 1.0  # int accepted for float
+    assert cfg.hotkey.max_hold_s == 1.0 # int accepted for float
     assert cfg.model.language == "de"
-    assert cfg.model.cpu_model == "small"  # untouched default
+    assert cfg.model.cpu_model == "small" # untouched default
 
 
 def test_vocabulary_list_becomes_tuple(tmp_path):
@@ -41,7 +41,7 @@ def test_vocabulary_list_becomes_tuple(tmp_path):
     ('[model]\nbeam_size = true', "expected int"),
     ('[model]\ncompute_type = "int4"', "compute_type"),
     ('[model]\ndevice = "npu"', "device must be"),
-    ('[model]\nname = "small"', "unknown key 'name'"),  # renamed to cpu_model
+    ('[model]\nname = "small"', "unknown key 'name'"), # renamed to cpu_model
     ('[model]\nlanguage = "deu"', "language"),
     ('[hotkey]\nkey = "ctrl_x"', "unknown key"),
     ('[hotkey]\nmax_hold_s = 10', "max_hold_s"),
@@ -59,7 +59,7 @@ def test_invalid_values(tmp_path, text, message):
 def test_commands_defaults_and_overrides(tmp_path):
     shipped = load_config(CONFIG_PATH).commands
     assert shipped.trigger == "command"
-    assert shipped.enabled is False and Config().commands.enabled is False  # opt-in
+    assert shipped.enabled is False and Config().commands.enabled is False # opt-in
     cfg = load_config(write(tmp_path, '[commands]\nenabled = true\ntrigger = "please format"\nbullet = "* "\n'))
     assert (cfg.commands.enabled, cfg.commands.trigger, cfg.commands.bullet) == (True, "please format", "* ")
 
@@ -101,7 +101,7 @@ def test_cancel_key(tmp_path):
 
 def test_history_keep(tmp_path):
     path = tmp_path / "config.toml"
-    assert load_config(CONFIG_PATH).history.keep == 5  # on by default
+    assert load_config(CONFIG_PATH).history.keep == 5 # on by default
     path.write_text("[history]\nkeep = 0\n", encoding="utf-8")
     assert load_config(path).history.keep == 0
     path.write_text("[history]\nkeep = 99\n", encoding="utf-8")
@@ -112,7 +112,7 @@ def test_history_keep(tmp_path):
 def test_tray_style(tmp_path):
     from whisperclaude.config import TRAY_STYLES
     from whisperclaude.tray_icons import STYLES
-    assert TRAY_STYLES == STYLES  # kept apart so config.py doesn't import PIL
+    assert TRAY_STYLES == STYLES # kept apart so config.py doesn't import PIL
     path = tmp_path / "config.toml"
     path.write_text('[tray]\nstyle = "classic"\n', encoding="utf-8")
     assert load_config(path).tray.style == "classic"
@@ -124,7 +124,7 @@ def test_tray_style(tmp_path):
 def test_pill_style(tmp_path):
     from whisperclaude.config import PILL_STYLES
     from whisperclaude.overlay import STYLES
-    assert PILL_STYLES == STYLES  # kept apart so config.py doesn't import Tk and numpy
+    assert PILL_STYLES == STYLES # kept apart so config.py doesn't import Tk and numpy
     path = tmp_path / "config.toml"
     path.write_text('[pill]\nstyle = "gradient"\n', encoding="utf-8")
     assert load_config(path).pill.style == "gradient"
@@ -135,7 +135,7 @@ def test_pill_style(tmp_path):
 
 def test_my_languages(tmp_path):
     path = tmp_path / "config.toml"
-    assert load_config(path).translation.my_languages == ()  # default: ask Windows
+    assert load_config(path).translation.my_languages == () # default: ask Windows
     path.write_text('[translation]\nmy_languages = ["de", "en"]\n', encoding="utf-8")
     assert load_config(path).translation.my_languages == ("de", "en")
     for bad in ('["german"]', '["de", 3]'):

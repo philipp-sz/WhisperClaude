@@ -45,7 +45,7 @@ def fakes(monkeypatch):
     ("gpu", True, "GPU"),
     ("gpu", False, "CPU"),
     ("igpu", True, "GPU"),
-    ("cuda", True, "CPU"),  # no NVIDIA GPU: CPU, not the iGPU
+    ("cuda", True, "CPU"), # no NVIDIA GPU: CPU, not the iGPU
     ("cpu", True, "CPU"),
 ])
 def test_device_selection(fakes, device, has_gpu, expected):
@@ -106,7 +106,7 @@ def test_auto_beam_size(fakes):
             seen["cpu"] = kwargs["beam_size"]
 
     fakes.setattr(t, "Transcriber", Recording)
-    t.create_transcriber(device="cpu")  # beam_size 0 = auto
+    t.create_transcriber(device="cpu") # beam_size 0 = auto
     assert seen["cpu"] == 1
     t.create_transcriber(device="cpu", beam_size=4)
     assert seen["cpu"] == 4
@@ -120,11 +120,11 @@ def test_cuda_precision_follows_free_vram(free_mb, expected):
 
 
 @pytest.mark.parametrize("model, free_mb, expected", [
-    ("auto", 10661, ("large-v3", "float16")),       # RTX 4070: the larger model
-    ("auto", 5000, ("large-v3", "int8_float16")),   # 2.1 GB, still better than the turbo
+    ("auto", 10661, ("large-v3", "float16")), # RTX 4070: the larger model
+    ("auto", 5000, ("large-v3", "int8_float16")), # 2.1 GB, still better than the turbo
     ("auto", 3000, ("large-v3-turbo", "int8_float16")),
-    ("auto", None, ("large-v3-turbo", "float16")),  # unknown: the safe choice
-    ("large-v3-turbo", 10661, ("large-v3-turbo", "float16")),  # set in config.toml: kept
+    ("auto", None, ("large-v3-turbo", "float16")), # unknown: the safe choice
+    ("large-v3-turbo", 10661, ("large-v3-turbo", "float16")), # set in config.toml: kept
 ])
 def test_cuda_model_follows_free_vram(model, free_mb, expected):
     assert t.cuda_choice(model, free_mb) == expected

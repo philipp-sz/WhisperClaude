@@ -23,12 +23,12 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from scripts.record_corpus import CORPUS, CORPUS_DIR  # noqa: E402
+from scripts.record_corpus import CORPUS, CORPUS_DIR # noqa: E402
 
 SR = 16_000
 RESULTS = ROOT / "bench_audio" / "eval_results.json"
 MODELS = {
-    "turbo-int8": "OpenVINO/whisper-large-v3-turbo-int8-ov",  # today's default
+    "turbo-int8": "OpenVINO/whisper-large-v3-turbo-int8-ov", # today's default
     "turbo-fp16": "OpenVINO/whisper-large-v3-turbo-fp16-ov",
     "turbo-int4": "OpenVINO/whisper-large-v3-turbo-int4-ov",
     "v3-int8": "OpenVINO/whisper-large-v3-int8-ov",
@@ -142,7 +142,7 @@ def highpass(audio: np.ndarray, hz: float = 80) -> np.ndarray:
     """Remove rumble below `hz` (desk knocks, fans, handling noise), smooth roll-off."""
     spec = np.fft.rfft(audio)
     f = np.fft.rfftfreq(len(audio), 1 / SR)
-    spec *= np.clip((f - hz / 2) / (hz / 2), 0, 1)  # 0 below hz/2, ramp to 1 at hz
+    spec *= np.clip((f - hz / 2) / (hz / 2), 0, 1) # 0 below hz/2, ramp to 1 at hz
     return np.fft.irfft(spec, len(audio)).astype(np.float32)
 
 
@@ -177,26 +177,26 @@ def worker(model_key: str, variants: list[dict]) -> None:
             "gpu_pct": (gpu_seconds() - g0) / 30 * 100}
     emit({"model": model_key, "load_s": load_s, "rss_gb": rss, "idle": idle})
 
-    examples = " " + " ".join(f"Command {c}." for c in COMMANDS)  # the app's prompt until 10-24
+    examples = " " + " ".join(f"Command {c}." for c in COMMANDS) # the app's prompt until 10-24
     prompts = {"app": t.build_prompt(DEFAULT_PROMPT, DEFAULT_VOCABULARY),
                "cmd_examples": t.build_prompt(DEFAULT_PROMPT + examples, DEFAULT_VOCABULARY),
                "none": None}
     real = tr.pipeline
     data = clips()
     vad_default = t.VadOptions
-    app_groups = t._speech_groups  # the app's: merged within one language (with detect)
+    app_groups = t._speech_groups # the app's: merged within one language (with detect)
 
-    def merge_groups(audio, *args, **kwargs):  # previous app behavior: merged blindly
+    def merge_groups(audio, *args, **kwargs): # previous app behavior: merged blindly
         return app_groups(audio)
 
-    def segment_groups(audio, *args, **kwargs):  # one chunk per passage
+    def segment_groups(audio, *args, **kwargs): # one chunk per passage
         return [[s] for g in app_groups(audio) for s in g]
 
     chunkers = {"app": app_groups, "merge": merge_groups, "segment": segment_groups}
     for v in variants:
         t._speech_groups = chunkers[v.get("chunk", "app")]
         t.LEAD_IN_S = v.get("lead", 0.5)
-        class Pipe:  # the app's _generate with this variant's generation settings
+        class Pipe: # the app's _generate with this variant's generation settings
             def get_generation_config(self, _v=v):
                 cfg = real.get_generation_config()
                 cfg.num_beams = _v.get("beams", 1)
@@ -215,7 +215,7 @@ def worker(model_key: str, variants: list[dict]) -> None:
         g0 = gpu_seconds()
         try:
             tr.transcribe(data[next(iter(data))][:SR])
-        except Exception as e:  # e.g. beam search isn't implemented on the GPU
+        except Exception as e: # e.g. beam search isn't implemented on the GPU
             emit({"model": model_key, "variant_error": v, "error": str(e).splitlines()[-1]})
             continue
         for cid, audio in data.items():
@@ -231,7 +231,7 @@ def worker(model_key: str, variants: list[dict]) -> None:
 
 
 def emit(obj: dict) -> None:
-    print("RESULT " + json.dumps(obj), flush=True)  # ASCII: the pipe is not UTF-8
+    print("RESULT " + json.dumps(obj), flush=True) # ASCII: the pipe is not UTF-8
 
 
 # ---------- report ----------
@@ -289,7 +289,7 @@ def main() -> None:
     if args.worker:
         worker(args.worker, json.loads(args.variants))
         sys.stdout.flush()
-        os._exit(0)  # OpenVINO threads block a normal exit
+        os._exit(0) # OpenVINO threads block a normal exit
     if args.report:
         report(json.loads(RESULTS.read_text(encoding="utf-8")))
         return
@@ -297,7 +297,7 @@ def main() -> None:
                 for pre in args.pre] + [{"pad_ms": pad} for pad in args.pad] + [
         {"chunk": c, **({"pad_ms": pad} if pad else {})} for c in args.chunk
         for pad in (args.pad or [None])]
-    if args.lead:  # cross every variant with each lead-in
+    if args.lead: # cross every variant with each lead-in
         variants = [{**v, "lead": lead} for v in variants for lead in args.lead]
     results = json.loads(RESULTS.read_text(encoding="utf-8")) if RESULTS.exists() else []
     for m in args.models:

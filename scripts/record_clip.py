@@ -14,8 +14,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from scripts.benchmark import AUDIO_DIR, SR, save_wav  # noqa: E402
-from whisperclaude.recorder import Recorder  # noqa: E402
+from scripts.benchmark import AUDIO_DIR, SR, save_wav # noqa: E402
+from whisperclaude.recorder import Recorder # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("name", help="file name without .wav")

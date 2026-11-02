@@ -12,7 +12,7 @@ import math
 
 from PIL import Image, ImageDraw
 
-SIZE, SS = 64, 4  # output size, supersampling factor
+SIZE, SS = 64, 4 # output size, supersampling factor
 S = SIZE * SS
 GREEN, RED, AMBER, GREY = (76, 175, 80), (255, 77, 79), (245, 166, 35), (154, 160, 166)
 DARK, WHITE = (32, 33, 36), (255, 255, 255)
@@ -21,10 +21,10 @@ COLOR = {"loading": GREY, "idle": GREEN, "recording": RED, "transcribing": AMBER
 STYLES = ("classic", "pulse", "bars", "ring")
 CYCLE_S = 2.0
 PI = math.pi
-ANIMATED = {"loading", "recording", "transcribing", "pasted"}  # these need frames
+ANIMATED = {"loading", "recording", "transcribing", "pasted"} # these need frames
 
 
-def _p(v: float) -> int:  # 64-px coordinates -> supersampled pixels
+def _p(v: float) -> int: # 64-px coordinates -> supersampled pixels
     return round(v * SS)
 
 
@@ -32,7 +32,7 @@ def _alpha(rgb: tuple[int, int, int], a: float) -> tuple[int, int, int, int]:
     return (*rgb, max(0, min(255, round(a * 255))))
 
 
-def _mic(d: ImageDraw.ImageDraw, color=WHITE, scale: float = 1.0, cx: float = 32) -> None:
+def _mic(d: ImageDraw.ImageDraw, color: tuple[int, int, int] = WHITE, scale: float = 1.0, cx: float = 32) -> None:
     """Microphone glyph (capsule, holder, stand, base), centered around (cx, 32)."""
     def x(v: float) -> int:
         return _p(cx + (v - 32) * scale)
@@ -59,26 +59,26 @@ def _check(d: ImageDraw.ImageDraw, p: float = 1.0) -> None:
         q = (p - 0.5) * 2
         end = (b[0] + (c[0] - b[0]) * q, b[1] + (c[1] - b[1]) * q)
         d.line((_p(b[0]), _p(b[1]), _p(end[0]), _p(end[1])), fill=WHITE, width=w)
-        r = w // 2  # round joint
+        r = w // 2 # round joint
         d.ellipse((_p(b[0]) - r, _p(b[1]) - r, _p(b[0]) + r, _p(b[1]) + r), fill=WHITE)
 
 
 def _lighter(rgb: tuple[int, int, int], p: float) -> tuple[int, int, int]:
-    return tuple(round(c + (255 - c) * p) for c in rgb)  # type: ignore[return-value]
+    return tuple(round(c + (255 - c) * p) for c in rgb) # type: ignore[return-value]
 
 
-def _disc(d: ImageDraw.ImageDraw, color, r: float = 30, a: float = 1.0) -> None:
+def _disc(d: ImageDraw.ImageDraw, color: tuple[int, int, int], r: float = 30, a: float = 1.0) -> None:
     d.ellipse((_p(32 - r), _p(32 - r), _p(32 + r), _p(32 + r)), fill=_alpha(color, a))
 
 
-def _spinner(d: ImageDraw.ImageDraw, t: float, color=WHITE, r: float = 26, width: float = 4,
-             speed: float = 1.0, length: float = 100) -> None:  # speed: turns per second
+def _spinner(d: ImageDraw.ImageDraw, t: float, color: tuple[int, int, int] = WHITE, r: float = 26, width: float = 4,
+             speed: float = 1.0, length: float = 100) -> None: # speed: turns per second
     start = (t * speed * 360) % 360
     d.arc((_p(32 - r), _p(32 - r), _p(32 + r), _p(32 + r)), start=start, end=start + length,
           fill=color, width=_p(width))
 
 
-def _bars(d: ImageDraw.ImageDraw, heights: list[float], color=WHITE) -> None:
+def _bars(d: ImageDraw.ImageDraw, heights: list[float], color: tuple[int, int, int] = WHITE) -> None:
     """Vertical rounded bars (like the pill's level bars), heights 0..1."""
     n, bw, gap = len(heights), 6, 4
     x0 = 32 - (n * bw + (n - 1) * gap) / 2
@@ -97,17 +97,17 @@ def render(style: str, state: str, t: float = 0.0, level: float = 0.0) -> Image.
         _disc(d, color)
         _mic(d)
     elif style == "pulse":
-        if state == "recording":  # the circle glows brighter with the voice
+        if state == "recording": # the circle glows brighter with the voice
             _disc(d, _lighter(color, 0.45 * level))
             _mic(d)
-        elif state == "transcribing":  # a white arc runs around the rim
+        elif state == "transcribing": # a white arc runs around the rim
             _disc(d, color)
             _spinner(d, t, r=29, width=4)
             _mic(d, scale=0.8)
         elif state == "loading":
             _disc(d, color, a=0.55 + 0.45 * (0.5 + 0.5 * math.sin(t * PI)))
             _mic(d)
-        else:  # pasted
+        else: # pasted
             _disc(d, color)
             _check(d, min(1.0, t / 0.25))
     elif style == "bars":
@@ -131,7 +131,7 @@ def render(style: str, state: str, t: float = 0.0, level: float = 0.0) -> Image.
         if state == "idle":
             d.ellipse(ring, outline=color, width=_p(6))
             _mic(d, scale=0.85)
-        elif state == "recording":  # the ring gets thicker with the voice
+        elif state == "recording": # the ring gets thicker with the voice
             d.ellipse(ring, outline=color, width=_p(5 + 6 * level))
             _mic(d, color=color, scale=0.85)
         elif state in ("transcribing", "loading"):

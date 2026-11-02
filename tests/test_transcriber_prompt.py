@@ -28,13 +28,13 @@ def _speak(meter, speech_db, noise_db=-66.0, seconds=6.0):
 
 
 def test_level_meter_lifts_quiet_speech_but_keeps_loud_louder():
-    fixed = lambda db: min(1.0, max(0.0, (db + 55) / 35))  # the old fixed scale
+    fixed = lambda db: min(1.0, max(0.0, (db + 55) / 35)) # the old fixed scale
     quiet = max(_speak(LevelMeter(), -52)[30:])
     medium = max(_speak(LevelMeter(), -45)[30:])
     loud = max(_speak(LevelMeter(), -22)[30:])
-    assert fixed(-52) < 0.1 and quiet > 0.4  # was nearly flat
+    assert fixed(-52) < 0.1 and quiet > 0.4 # was nearly flat
     assert fixed(-45) < 0.3 and medium > 0.6
-    assert loud > 0.95 and quiet < medium < loud  # still louder = higher
+    assert loud > 0.95 and quiet < medium < loud # still louder = higher
 
 
 def test_level_meter_keeps_silence_flat():

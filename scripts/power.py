@@ -59,4 +59,4 @@ def gpu_seconds(pid: int | None = None) -> float:
          rf'(Get-Counter "\GPU Engine(pid_{pid}_*)\Running Time" -ErrorAction SilentlyContinue)'
          ".CounterSamples | Measure-Object CookedValue -Sum | % Sum"],
         capture_output=True, text=True).stdout.strip()
-    return float(out or 0) / 1e7  # 100 ns units
+    return float(out or 0) / 1e7 # 100 ns units

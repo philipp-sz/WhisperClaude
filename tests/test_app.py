@@ -69,8 +69,8 @@ def test_toggle_during_transcribing_is_ignored():
     app, _, pasted = make_app()
     app.handle(TOGGLE)
     app.handle(TOGGLE)
-    app.handle(TOGGLE)  # ignored
-    app.handle(TOGGLE)  # ignored
+    app.handle(TOGGLE) # ignored
+    app.handle(TOGGLE) # ignored
     assert app.state is State.TRANSCRIBING
     assert app.recorder.started == 1
     app.transcriber.release.set()
@@ -156,7 +156,7 @@ def test_wake_queue_calls_wake_and_swallows_errors():
         raise RuntimeError("main thread is not in main loop")
 
     q.wake = broken
-    q.put("b")  # must not raise: the backup poll picks it up
+    q.put("b") # must not raise: the backup poll picks it up
     assert [q.get_nowait(), q.get_nowait()] == ["a", "b"]
 
 
@@ -165,7 +165,7 @@ def test_wake_queue_put_never_waits_for_the_consumer():
     Windows would silently remove the hook."""
     q = WakeQueue()
     release = threading.Event()
-    q.wake = lambda: release.wait(5)  # a consumer that is stuck
+    q.wake = lambda: release.wait(5) # a consumer that is stuck
     t0 = time.monotonic()
     for i in range(3):
         q.put(i)
@@ -200,7 +200,7 @@ def test_set_transcriber_ends_loading():
     tr = BlockingTranscriber()
     tr.release.set()
     app.set_transcriber(tr)
-    assert app.state is State.IDLE and states == []  # caller shows its own "ready" animation
+    assert app.state is State.IDLE and states == [] # caller shows its own "ready" animation
     app.handle(TOGGLE)
     assert app.state is State.RECORDING
 
@@ -219,7 +219,7 @@ def test_custom_event_handlers():
     seen = []
     app.handlers["loaded"] = seen.append
     app.handle("loaded", "payload")
-    app.handle("unknown kind", "ignored")  # no handler: ignored
+    app.handle("unknown kind", "ignored") # no handler: ignored
     assert seen == ["payload"]
 
 
@@ -246,7 +246,7 @@ def test_postprocess_result_that_is_only_a_line_break_is_still_pasted():
     pasted = []
     app = App(FakeRecorder(), tr, pasted.append, postprocess=lambda t: "\n")
     run_cycle(app)
-    assert pasted == ["\n"]  # "nothing recognized" is judged on the raw transcript
+    assert pasted == ["\n"] # "nothing recognized" is judged on the raw transcript
 
 
 def test_empty_transcript_skips_postprocess_and_paste():
@@ -312,7 +312,7 @@ def test_live_transcription_is_fed_while_recording_and_finished_at_the_stop(monk
     app.handle(TOGGLE)
     finish(app)
     assert pasted == ["live text"] and live.finished == SAMPLE_RATE
-    assert app.transcriber.calls == 0  # no second pass over the whole recording
+    assert app.transcriber.calls == 0 # no second pass over the whole recording
 
 
 def test_failing_live_feed_still_finishes_at_the_stop(monkeypatch):
@@ -324,7 +324,7 @@ def test_failing_live_feed_still_finishes_at_the_stop(monkeypatch):
     assert wait_for(lambda: live.feeds >= 1)
     app.handle(TOGGLE)
     finish(app)
-    assert pasted == ["live text"] and live.feeds == 1  # feeding stopped after the error
+    assert pasted == ["live text"] and live.feeds == 1 # feeding stopped after the error
 
 
 def test_failing_recorder_stop_returns_to_idle():
@@ -337,7 +337,7 @@ def test_failing_recorder_stop_returns_to_idle():
     app.handle(TOGGLE)
     assert app.state is State.IDLE and "device unplugged" in states[-1][1]
     app.handle(TOGGLE)
-    assert app.state is State.RECORDING  # not stuck
+    assert app.state is State.RECORDING # not stuck
 
 
 # ---------- auto-stop of a forgotten recording ----------
@@ -357,7 +357,7 @@ def auto_app(monkeypatch, speech):
     live, pasted, kept, states = SilentLive(speech), [], [], []
     app = App(SnapshotRecorder(), LiveTranscriber(live), pasted.append,
               on_state=lambda s, msg="": states.append((s, msg)), stop_after_silence_s=0.5,
-              on_kept=lambda text, msg: kept.append((text, msg)))  # the fake mic has 1 s
+              on_kept=lambda text, msg: kept.append((text, msg))) # the fake mic has 1 s
     app.handle(TOGGLE)
     return app, live, pasted, kept, states
 
@@ -384,7 +384,7 @@ def test_recording_with_speech_keeps_going(monkeypatch):
 
 def test_auto_stop_after_a_manual_stop_is_ignored():
     app, states, _ = make_app()
-    app.handle(app_module.AUTO_STOP)  # arrives late: the user already stopped
+    app.handle(app_module.AUTO_STOP) # arrives late: the user already stopped
     assert app.state is State.IDLE and states == []
 
 
@@ -403,7 +403,7 @@ def test_cancel_keeps_the_text_in_the_history_without_pasting():
     assert pasted == [] and kept == [("halber Satz", "Cancelled")]
     assert saved == [("halber Satz", {"note": "cancelled"})]
     app.handle(TOGGLE)
-    assert app.state is State.RECORDING  # next recording works
+    assert app.state is State.RECORDING # next recording works
 
 
 def test_cancel_with_nothing_said_just_says_cancelled():
@@ -417,7 +417,7 @@ def test_cancel_with_nothing_said_just_says_cancelled():
 
 def test_cancel_outside_a_recording_is_ignored():
     app, states, _ = make_app()
-    app.handle(app_module.CANCEL)  # Esc pressed somewhere while idle
+    app.handle(app_module.CANCEL) # Esc pressed somewhere while idle
     assert app.state is State.IDLE and states == []
 
 
@@ -519,14 +519,14 @@ def test_translate_selection():
     app.handle(app_module.TRANSLATE)
     assert app.state is State.TRANSLATING
     pump_until(app, lambda: t.picks)
-    assert t.picks[0][1] is False  # not a dictation
-    app.handle(app_module.TRANSLATE)  # tapped again in the picker: take the top language
+    assert t.picks[0][1] is False # not a dictation
+    app.handle(app_module.TRANSLATE) # tapped again in the picker: take the top language
     assert t.confirmed == 1
     t.answer("deu_Latn")
     pump_until(app, lambda: app.state is State.IDLE)
     assert pasted == ["[deu_Latn] Hallo Welt"]
     assert saved == [("Hallo Welt", {"translation": "[deu_Latn] Hallo Welt",
-                                     "target": "deu_Latn"})]  # both, one entry
+                                     "target": "deu_Latn"})] # both, one entry
     assert (State.TRANSLATING, "") in states
 
 
@@ -565,9 +565,9 @@ def test_dictate_and_translate():
     t = FakeTranslation()
     app, states, pasted, kept, saved = make_translate_app(t)
     app.handle(TOGGLE)
-    app.handle(app_module.TRANSLATE)  # instead of the second Ctrl tap
+    app.handle(app_module.TRANSLATE) # instead of the second Ctrl tap
     assert app.state is State.TRANSCRIBING
-    assert t.picks and t.picks[0][1] is True  # the picker opens right away
+    assert t.picks and t.picks[0][1] is True # the picker opens right away
     t.answer("fra_Latn")
     pump_until(app, lambda: app.state is State.IDLE)
     assert t.translated == [("hallo welt", "fra_Latn")]
@@ -578,8 +578,8 @@ def test_dictate_and_translate():
 
 
 @pytest.mark.parametrize("focus_back, pasted_expected, kept_expected, note", [
-    (True, ["hallo welt"], [], None),  # Esc: paste the dictation untranslated
-    (False, [], [("hallo welt", "Not pasted (the focus moved)")], "not pasted"),  # elsewhere
+    (True, ["hallo welt"], [], None), # Esc: paste the dictation untranslated
+    (False, [], [("hallo welt", "Not pasted (the focus moved)")], "not pasted"), # elsewhere
 ])
 def test_dictation_picker_cancelled(focus_back, pasted_expected, kept_expected, note):
     t = FakeTranslation()
@@ -610,14 +610,14 @@ def test_nothing_recognized_closes_the_picker():
     app.handle(TOGGLE)
     app.handle(app_module.TRANSLATE)
     pump_until(app, lambda: t.closed == 1)
-    t.answer(None)  # what close_pick() does in the real picker
+    t.answer(None) # what close_pick() does in the real picker
     pump_until(app, lambda: app.state is State.IDLE)
     assert not pasted and states[-1] == (State.IDLE, "Nothing recognized")
 
 
 def test_translate_key_without_feature_or_while_loading():
     app, states, pasted = make_app()
-    app.handle(app_module.TRANSLATE)  # feature off: nothing happens
+    app.handle(app_module.TRANSLATE) # feature off: nothing happens
     assert app.state is State.IDLE and not states
     t = FakeTranslation()
     loading = App(FakeRecorder(), None, lambda text: None, translation=t,
@@ -631,8 +631,8 @@ def test_selection_picker_shows_the_guess_and_the_picked_source_is_used():
     app, states, pasted, *_ = make_translate_app(t)
     app.handle(app_module.TRANSLATE)
     pump_until(app, lambda: t.picks)
-    assert t.picks[0][2] == ["deu_Latn"]  # "Auto · German" in the picker
-    t.answer("fra_Latn", source="nld_Latn")  # the user overrode the source
+    assert t.picks[0][2] == ["deu_Latn"] # "Auto · German" in the picker
+    t.answer("fra_Latn", source="nld_Latn") # the user overrode the source
     pump_until(app, lambda: app.state is State.IDLE)
     assert t.sources == ["nld_Latn"] and pasted == ["[fra_Latn] Hallo Welt"]
 
@@ -642,7 +642,7 @@ def test_dictation_guess_reaches_the_open_picker():
     app, states, pasted, *_ = make_translate_app(t)
     app.handle(TOGGLE)
     app.handle(app_module.TRANSLATE)
-    assert t.picks[0][2] == []  # opened before the transcript exists
+    assert t.picks[0][2] == [] # opened before the transcript exists
     pump_until(app, lambda: t.guesses)
     assert t.guesses == [["deu_Latn"]]
     t.answer("fra_Latn")

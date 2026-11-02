@@ -7,9 +7,9 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from ctypes import wintypes
 from pathlib import Path
-from typing import Callable
 
 import pystray
 from PIL import Image, ImageDraw
@@ -20,9 +20,9 @@ from whisperclaude.languages import BY_CODE
 from whisperclaude.tray_icons import ANIMATED, CYCLE_S, render
 
 log = logging.getLogger(__name__)
-try:  # pystray's own tray-icon callback message (right/left click), not Windows' WM_NOTIFY
+try: # pystray's own tray-icon callback message (right/left click), not Windows' WM_NOTIFY
     from pystray._util.win32 import NIF_ICON, NIM_MODIFY, WM_NOTIFY
-except ImportError:  # not on Windows
+except ImportError: # not on Windows
     NIF_ICON = NIM_MODIFY = WM_NOTIFY = -1
 
 COLORS = {State.LOADING: "#9aa0a6", State.IDLE: "#4caf50", State.RECORDING: "#ff4d4f",
@@ -35,7 +35,7 @@ QUIT_QUESTION = ("Quit WhisperClaude?\n\nDictation stays off until you start it 
 
 def confirm_quit() -> bool:
     """Yes/No dialog; "No" is the default button, so a stray Enter or click doesn't quit."""
-    flags = 0x4 | 0x20 | 0x100 | 0x10000 | 0x40000  # YESNO, QUESTION, DEFBUTTON2, FOREGROUND, TOPMOST
+    flags = 0x4 | 0x20 | 0x100 | 0x10000 | 0x40000 # YESNO, QUESTION, DEFBUTTON2, FOREGROUND, TOPMOST
     return ctypes.windll.user32.MessageBoxW(None, QUIT_QUESTION, "WhisperClaude", flags) == 6
 
 
@@ -44,10 +44,10 @@ def _image(color: str) -> Image.Image:
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.ellipse((2, 2, 62, 62), fill=color)
-    d.rounded_rectangle((25, 12, 39, 38), radius=7, fill="white")        # capsule
-    d.arc((18, 22, 46, 46), start=0, end=180, fill="white", width=3)     # holder
-    d.line((32, 46, 32, 52), fill="white", width=3)                      # stand
-    d.line((24, 52, 40, 52), fill="white", width=3)                      # base
+    d.rounded_rectangle((25, 12, 39, 38), radius=7, fill="white") # capsule
+    d.arc((18, 22, 46, 46), start=0, end=180, fill="white", width=3) # holder
+    d.line((32, 46, 32, 52), fill="white", width=3) # stand
+    d.line((24, 52, 40, 52), fill="white", width=3) # base
     return img
 
 
@@ -110,7 +110,7 @@ class _Animator:
 
     def __init__(self, icon: pystray.Icon, style: str, level_fn: Callable[[], float]) -> None:
         self.icon, self.style, self.level_fn = icon, style, level_fn
-        self.size = ctypes.windll.user32.GetSystemMetrics(49) or 16  # SM_CXSMICON, DPI-scaled
+        self.size = ctypes.windll.user32.GetSystemMetrics(49) or 16 # SM_CXSMICON, DPI-scaled
         self._cache: dict[tuple, int] = {}
         self._state, self._since = "loading", time.monotonic()
         self._flash_since = -1.0
@@ -146,7 +146,7 @@ class _Animator:
             try:
                 if key != shown and self._push(key):
                     shown = key
-            except Exception:  # never let a drawing problem end the thread silently
+            except Exception: # never let a drawing problem end the thread silently
                 if not failed:
                     log.exception("tray animation frame failed")
                 failed, shown = True, key
@@ -156,14 +156,14 @@ class _Animator:
 
     def _push(self, key: tuple) -> bool:
         if not getattr(self.icon, "_hwnd", None):
-            return False  # tray icon not shown yet
+            return False # tray icon not shown yet
         handle = self._cache.get(key)
         if handle is None:
             state, step, level = key
             img = render(self.style, state, step / FPS, level / 9)
             handle = self._cache[key] = hicon_from_image(
                 img.resize((self.size, self.size), Image.LANCZOS))
-        self.icon._icon_handle = handle  # so pystray re-adds this one after an explorer restart
+        self.icon._icon_handle = handle # so pystray re-adds this one after an explorer restart
         self.icon._message(NIM_MODIFY, NIF_ICON, hIcon=handle)
         return True
 
@@ -178,7 +178,7 @@ class Tray:
                  style: str = "classic", level_fn: Callable[[], float] = lambda: 0.0,
                  confirm: Callable[[], bool] = confirm_quit) -> None:
         self._state = State.LOADING
-        self.engine = ""  # "iGPU" / "CPU", set once the model is loaded
+        self.engine = "" # "iGPU" / "CPU", set once the model is loaded
         self._labels = {State.LOADING: "Loading model…", State.IDLE: f"Ready (tap {hotkey_label})",
                         State.RECORDING: "Recording…", State.TRANSCRIBING: "Transcribing…",
                         State.TRANSLATING: "Translating…"}
@@ -190,7 +190,7 @@ class Tray:
         on_quit, on_restart = self._logged("Quit", on_quit), self._logged("Restart", on_restart)
         ask_quit = on_quit
 
-        def on_quit() -> None:  # runs on the tray thread, the menu is closed already
+        def on_quit() -> None: # runs on the tray thread, the menu is closed already
             if confirm():
                 ask_quit()
             else:
@@ -219,7 +219,7 @@ class Tray:
     @staticmethod
     def _logged(name: str, action: Callable[[], None]) -> Callable[[], None]:
         def run() -> None:
-            log.info("tray menu: %s", name)  # a quit is always traceable in the log
+            log.info("tray menu: %s", name) # a quit is always traceable in the log
             action()
         return run
 
@@ -235,14 +235,14 @@ class Tray:
         """
         handlers = getattr(self.icon, "_message_handlers", None)
         if not isinstance(handlers, dict) or WM_NOTIFY not in handlers:
-            return  # not pystray's Win32 backend
+            return # not pystray's Win32 backend
         show_menu = handlers[WM_NOTIFY]
 
         def on_notify(wparam: int, lparam: int) -> int:
             with self._menu_lock:
                 self._menu_open = True
             try:
-                return show_menu(wparam, lparam)  # blocks while the menu is open
+                return show_menu(wparam, lparam) # blocks while the menu is open
             finally:
                 with self._menu_lock:
                     self._menu_open = False
@@ -250,7 +250,7 @@ class Tray:
                     self.refresh()
 
         handlers[WM_NOTIFY] = on_notify
-        self.icon.update_menu = self.refresh  # pystray's own rebuild after a click, too
+        self.icon.update_menu = self.refresh # pystray's own rebuild after a click, too
 
     def _recent_items(self) -> list[pystray.MenuItem]:
         """Submenu, rebuilt on update_menu(): preview left, time right-aligned (the tab puts
@@ -266,7 +266,7 @@ class Tray:
     def _entry_item(self, e: Entry, newest: bool) -> pystray.MenuItem:
         """A dictation; a translated one opens a submenu with the original and the
         translation."""
-        when = f"{e.when()} · {e.note}" if e.note else e.when()  # e.g. "12:20 · cancelled"
+        when = f"{e.when()} · {e.note}" if e.note else e.when() # e.g. "12:20 · cancelled"
         if not e.translation:
             return pystray.MenuItem(f"{e.preview()}\t{when}", self._copy_action(e.text),
                                     default=newest)
@@ -308,7 +308,7 @@ class Tray:
     def set_state(self, state: State, msg: str = "") -> None:
         self._state = state
         if self._animator is not None:
-            busy = State.TRANSCRIBING if state is State.TRANSLATING else state  # same icon
+            busy = State.TRANSCRIBING if state is State.TRANSLATING else state # same icon
             self._animator.set(busy.value)
         else:
             self.icon.icon = self._images[state]

@@ -21,7 +21,7 @@ def test_clean_exit_leaves_no_trace(tmp_path):
     lifecycle.mark_running(tmp_path)
     lifecycle.mark_clean_exit(tmp_path)
     assert lifecycle.previous_instance_died(tmp_path) is None
-    lifecycle.mark_clean_exit(tmp_path)  # idempotent
+    lifecycle.mark_clean_exit(tmp_path) # idempotent
 
 
 def test_marker_of_a_dead_instance_is_reported_with_time(tmp_path):
@@ -78,4 +78,4 @@ def test_user_quit_marker(tmp_path):
     assert lifecycle.user_quit(tmp_path)
     lifecycle.clear_user_quit(tmp_path)
     assert not lifecycle.user_quit(tmp_path)
-    lifecycle.clear_user_quit(tmp_path)  # idempotent
+    lifecycle.clear_user_quit(tmp_path) # idempotent

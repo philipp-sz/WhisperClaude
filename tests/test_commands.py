@@ -60,9 +60,9 @@ def nl(s: str) -> str:
     ("Shopping command bullet why is it so expensive? Because of the tax.",
      "Shopping⏎- why is it so expensive?⏎⏎Because of the tax."),
     ("Notes command bullet he said command open quote hi. there command close quote. Then more.",
-     'Notes⏎- he said "hi. there"⏎⏎Then more.'),  # a sentence end inside quotes doesn't end the item
-    ("Command bullet one command bullet two", "- one⏎- two"),                       # flow: ends at the next command
-    ("Intro. Command bullet one. Command new line. Text", "Intro.⏎- one⏎Text"),     # explicit command wins
+     'Notes⏎- he said "hi. there"⏎⏎Then more.'), # a sentence end inside quotes doesn't end the item
+    ("Command bullet one command bullet two", "- one⏎- two"), # flow: ends at the next command
+    ("Intro. Command bullet one. Command new line. Text", "Intro.⏎- one⏎Text"), # explicit command wins
     # separator
     ("Part one is done. Command separator. Part two starts here.",
      "Part one is done.⏎⏎---⏎⏎Part two starts here."),
@@ -123,8 +123,8 @@ def test_ordinary_text_is_untouched(text):
 
 
 @pytest.mark.parametrize("text", [
-    "Hello team, command, new line, here is the update.",   # comma between the two words
-    "Hello team. Command. New line. Here is the update.",   # period between the two words
+    "Hello team, command, new line, here is the update.", # comma between the two words
+    "Hello team. Command. New line. Here is the update.", # period between the two words
 ])
 def test_separated_trigger_is_a_miss_not_a_guess(text):
     """If Whisper puts punctuation between the words they are left as text: visible and easy
@@ -160,4 +160,4 @@ def test_noun_guard_does_not_block_real_commands():
     """Only a determiner/possessive DIRECTLY before the trigger blocks it."""
     assert apply_commands("My list command bullet milk command bullet eggs") == "My list\n- milk\n- eggs"
     assert apply_commands("Remember the milk. Command new line. Thanks.") == "Remember the milk.\nThanks."
-    assert apply_commands("It was that. Command bullet next") == "It was that.\n- next"  # sentence boundary
+    assert apply_commands("It was that. Command bullet next") == "It was that.\n- next" # sentence boundary

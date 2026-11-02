@@ -36,5 +36,5 @@ def test_stop_with_a_vanished_device_keeps_the_audio():
     stream = FakeStream(fail_stop=True)
     r = recording(stream)
     audio = r.stop()
-    assert len(audio) == 320  # the dictation isn't lost
-    assert stream.closed and not r.is_recording  # and the next start() opens a new stream
+    assert len(audio) == 320 # the dictation isn't lost
+    assert stream.closed and not r.is_recording # and the next start() opens a new stream

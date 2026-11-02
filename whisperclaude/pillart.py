@@ -52,7 +52,7 @@ def bars(width: int, height: int, values: np.ndarray, bar_w: float, gap: float,
     r = bar_w / 2
     half = np.maximum((min_h + (max_h - min_h) * np.asarray(values, np.float32)[i]) / 2 - r, 0)
     dy = np.maximum(np.abs(y - height / 2) - half, 0)
-    d = np.sqrt((x - (i * pitch + r)) ** 2 + dy ** 2) - r  # distance to the capsule
+    d = np.sqrt((x - (i * pitch + r)) ** 2 + dy ** 2) - r # distance to the capsule
     cover = np.clip(0.5 - d, 0, 1)[..., None]
     shine = 1 + 0.35 * np.clip(1 - np.abs(y - height / 2) / (half + r), 0, 1)[..., None]
     color = np.minimum(gradient(colors, n)[i][None] * shine, 1)
@@ -83,15 +83,15 @@ def waves(width: int, height: int, envelope: np.ndarray, t: float,
     mid = height / 2
     reach = mid - 1.5
     e = np.pad(np.asarray(envelope, np.float32), 2, mode="edge")
-    e = np.convolve(e, np.array([1, 2, 3, 2, 1], np.float32) / 9, "valid")  # calm the jitter
-    env = _smooth(e, u) ** 0.75 * np.sin(np.pi * u) ** 0.5  # taper to nothing at both ends
+    e = np.convolve(e, np.array([1, 2, 3, 2, 1], np.float32) / 9, "valid") # calm the jitter
+    env = _smooth(e, u) ** 0.75 * np.sin(np.pi * u) ** 0.5 # taper to nothing at both ends
     out = np.broadcast_to(rgb(bg), (height, width, 3)).copy()
     dist = np.abs(y - mid)
     for (cycles, speed, phase, share), color in zip(_LAYERS, colors):
         wobble = 0.3 + 0.7 * (0.5 + 0.5 * np.sin(2 * np.pi * cycles * u - speed * t + phase))
-        a = reach * np.tanh(1.35 * env * wobble * share)  # loud: rounded peaks, never clipped
+        a = reach * np.tanh(1.35 * env * wobble * share) # loud: rounded peaks, never clipped
         cover = np.clip(a + 0.5 - dist, 0, 1)[..., None]
-        near = np.clip(1 - dist / (a + 1), 0, 1)[..., None]  # 1 at the line, 0 at the tip
+        near = np.clip(1 - dist / (a + 1), 0, 1)[..., None] # 1 at the line, 0 at the tip
         c = rgb(color)
         out += (c + (1 - c) * 0.3 * near ** 2 - out) * cover * 0.82
     glow = np.clip(line / 2 + 0.5 - dist, 0, 1)
@@ -104,7 +104,7 @@ def flowing(n: int, t: float, base: float = 0.3, swell: float = 0.6) -> np.ndarr
     """Envelope for "working" states: a bump that runs through, left to right."""
     u = np.linspace(0, 1, n)
     run = (t * 0.6) % 1.0
-    bumps = sum(np.exp(-((u - run - k) / 0.22) ** 2) for k in (-1, 0, 1))  # wraps around
+    bumps = sum(np.exp(-((u - run - k) / 0.22) ** 2) for k in (-1, 0, 1)) # wraps around
     return base + swell * bumps + 0.08 * np.sin(2 * math.pi * u * 2 - t * 3)
 
 
@@ -122,7 +122,7 @@ GLYPHS = {
     "bang": ([((0.5, 0.26), (0.5, 0.55))], [(0.5, 0.73)], 0.075),
     "info": ([((0.5, 0.46), (0.5, 0.74))], [(0.5, 0.28)], 0.075),
 }
-_STOP = (0.17, 0.05)  # the "stop" symbol: a rounded square, half side and corner radius
+_STOP = (0.17, 0.05) # the "stop" symbol: a rounded square, half side and corner radius
 
 
 def _grid(size: int) -> tuple[np.ndarray, np.ndarray]:
@@ -130,11 +130,12 @@ def _grid(size: int) -> tuple[np.ndarray, np.ndarray]:
     return c[None, :], c[:, None]
 
 
-def _gradient_disk(size: int, grow: float, colors: tuple[str, ...], bg: str):
+def _gradient_disk(size: int, grow: float, colors: tuple[str, ...],
+                   bg: str) -> tuple[np.ndarray, np.ndarray, float]:
     """A disk with a diagonal gradient; (pixels, coverage, scale of the symbol)."""
     x, y = _grid(size)
     mid = size / 2
-    scale = max(0.0, grow) / 1.1  # at grow 1 there is room for a 10 % overshoot
+    scale = max(0.0, grow) / 1.1 # at grow 1 there is room for a 10 % overshoot
     disk = np.clip((mid - 0.5) * scale + 0.5 - np.hypot(x - mid, y - mid), 0, 1)[..., None]
     stops = np.stack([rgb(col) for col in colors])
     pos = np.clip((x + y) / (2 * size), 0, 1) * (len(colors) - 1)
@@ -160,7 +161,7 @@ def _glyph_distance(size: int, glyph: str, scale: float, draw: float) -> np.ndar
         dist = np.minimum(dist, _segment_distance(x, y, a, (a[0] + (b[0] - a[0]) * f,
                                                             a[1] + (b[1] - a[1]) * f)))
         left -= math.dist(a, b)
-    if draw >= 1:  # dots appear once the strokes are complete
+    if draw >= 1: # dots appear once the strokes are complete
         for point in dots:
             px, py = to_px(*point)
             dist = np.minimum(dist, np.hypot(x - px, y - py))
@@ -174,7 +175,7 @@ def badge(size: int, grow: float, draw: float, colors: tuple[str, ...], bg: str,
     out, disk, scale = _gradient_disk(size, grow, colors, bg)
     if draw <= 0 or scale <= 0:
         return _to_image(out)
-    if glyph == "stop":  # fades in instead of being drawn
+    if glyph == "stop": # fades in instead of being drawn
         x, y = _grid(size)
         half, corner = (v * size * scale for v in _STOP)
         qx, qy = np.abs(x - size / 2) - half + corner, np.abs(y - size / 2) - half + corner
@@ -197,8 +198,8 @@ def spinner(size: int, t: float, colors: tuple[str, ...], bg: str, grow: float =
     radius, half = (mid - 0.5) * scale * 0.78, max(0.8 * min(1.0, scale), size * 0.09 * scale)
     ring = np.clip(half + 0.5 - np.abs(np.hypot(x - mid, y - mid) - radius), 0, 1)[..., None]
     head = (t % 1.0) * 2 * math.pi
-    behind = (head - np.arctan2(y - mid, x - mid)) % (2 * math.pi)  # 0 at the head
-    arc = np.clip(1 - behind / (1.4 * math.pi), 0, 1)[..., None]  # the tail fades out
+    behind = (head - np.arctan2(y - mid, x - mid)) % (2 * math.pi) # 0 at the head
+    arc = np.clip(1 - behind / (1.4 * math.pi), 0, 1)[..., None] # the tail fades out
     color = gradient(colors, 64)[np.minimum((arc[..., 0] * 63).astype(int), 63)]
     out = rgb(bg) + (rgb(track) - rgb(bg)) * ring
     return _to_image(out + (color - out) * ring * arc ** 1.5)

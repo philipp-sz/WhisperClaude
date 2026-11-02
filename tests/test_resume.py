@@ -14,12 +14,12 @@ from whisperclaude.hotkey import GapDetector, HotkeyListener
 def test_gap_detector_flags_only_long_gaps():
     now = [1000.0]
     d = GapDetector(threshold_s=15, clock=lambda: now[0])
-    for _ in range(5):  # regular 1 s polls
+    for _ in range(5): # regular 1 s polls
         now[0] += 1.0
         assert d.check() == 0.0
-    now[0] += 3600  # the laptop slept for an hour
+    now[0] += 3600 # the laptop slept for an hour
     assert d.check() == pytest.approx(3600)
-    now[0] += 1.0   # and the next normal poll is quiet again
+    now[0] += 1.0 # and the next normal poll is quiet again
     assert d.check() == 0.0
 
 
@@ -61,11 +61,11 @@ def test_restart_replaces_hooks_and_still_toggles(fake_listeners):
     assert len(first) == 2 and all(i.started for i in first)
 
     hl.restart()
-    assert all(i.stopped for i in first)  # old hooks removed
+    assert all(i.stopped for i in first) # old hooks removed
     fresh = fake_listeners.instances[2:]
-    assert len(fresh) == 2 and all(i.started for i in fresh)  # new hooks installed
+    assert len(fresh) == 2 and all(i.started for i in fresh) # new hooks installed
 
-    kb = next(i for i in fresh if "on_press" in i.callbacks)  # the keyboard listener
+    kb = next(i for i in fresh if "on_press" in i.callbacks) # the keyboard listener
     kb.callbacks["on_press"](hotkey.DEFAULT_KEY)
     kb.callbacks["on_release"](hotkey.DEFAULT_KEY)
     assert events.get_nowait() == (hotkey.TOGGLE, None)
@@ -105,7 +105,7 @@ def audio(monkeypatch):
 
 
 def test_start_refreshes_devices_and_retries_once(audio):
-    audio["fail_first"] = 1  # e.g. stale device list after waking up
+    audio["fail_first"] = 1 # e.g. stale device list after waking up
     r = recorder.Recorder()
     r.start()
     assert r.is_recording

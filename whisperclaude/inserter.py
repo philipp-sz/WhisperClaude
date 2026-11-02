@@ -11,7 +11,7 @@ import contextlib
 import ctypes
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from ctypes import wintypes
 
 from pynput.keyboard import Controller, Key
@@ -25,7 +25,7 @@ CF_UNICODETEXT = 13
 # Formats whose data is a GDI handle, not memory we can copy. Windows synthesizes CF_BITMAP
 # from the CF_DIB / CF_DIBV5 copy, so images still come back. 0x200-0x3FF: private formats.
 _NOT_MEMORY = {2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E}
-MAX_SAVE_BYTES = 256 * 1024 * 1024  # skip formats beyond this (memory), e.g. huge images
+MAX_SAVE_BYTES = 256 * 1024 * 1024 # skip formats beyond this (memory), e.g. huge images
 GMEM_MOVEABLE = 0x0002
 HWND_MESSAGE = wintypes.HWND(-3)
 
@@ -34,7 +34,7 @@ _user32 = ctypes.WinDLL("user32", use_last_error=True)
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 
-def _api(dll: ctypes.WinDLL, name: str, restype, *argtypes):
+def _api(dll: ctypes.WinDLL, name: str, restype: object, *argtypes: object) -> Callable[..., object]:
     fn = getattr(dll, name)
     fn.restype, fn.argtypes = restype, argtypes
     return fn
@@ -68,7 +68,7 @@ _NO_CLOUD = [(_RegisterClipboardFormatW("CanUploadToCloudClipboard"), (0).to_byt
 _NO_HISTORY = [(_RegisterClipboardFormatW("CanIncludeInClipboardHistory"),
                 (0).to_bytes(4, "little"))] + _NO_CLOUD
 
-Saved = list[tuple[int, bytes]]  # (format, data) pairs; [] = the clipboard was empty
+Saved = list[tuple[int, bytes]] # (format, data) pairs; [] = the clipboard was empty
 
 
 class ClipboardError(OSError):
@@ -131,12 +131,12 @@ def _write(items: Saved) -> None:
                 raise ClipboardError("out of memory")
             ctypes.memmove(ptr, data, len(data))
             _GlobalUnlock(handle)
-            if not _SetClipboardData(fmt, handle):  # on success Windows owns the memory
+            if not _SetClipboardData(fmt, handle): # on success Windows owns the memory
                 _GlobalFree(handle)
 
 
 def restore_clipboard(saved: Saved) -> None:
-    _write(saved + _NO_HISTORY if saved else [])  # the restore isn't a new history entry
+    _write(saved + _NO_HISTORY if saved else []) # the restore isn't a new history entry
 
 
 def set_clipboard_text(text: str) -> None:
@@ -221,9 +221,9 @@ def capture_selection(timeout: float = 0.6) -> str | None:
     deadline = time.monotonic() + timeout
     while _GetClipboardSequenceNumber() == sequence:
         if time.monotonic() > deadline:
-            return None  # nothing copied, the clipboard is untouched
+            return None # nothing copied, the clipboard is untouched
         time.sleep(0.01)
-    time.sleep(0.05)  # apps may add more formats right after the first one
+    time.sleep(0.05) # apps may add more formats right after the first one
     with _opened():
         handle = _GetClipboardData(CF_UNICODETEXT)
         ptr = _GlobalLock(handle) if handle else None
@@ -267,7 +267,7 @@ def paste_text(text: str, restore_delay: float = 0.3) -> None:
     time.sleep(restore_delay)
     if saved is None:
         return
-    try:  # the text is pasted already: a failed restore is no reason to report an error
+    try: # the text is pasted already: a failed restore is no reason to report an error
         if clipboard_text() != text:
             log.info("clipboard changed since the paste (you copied something?), not restoring")
             return

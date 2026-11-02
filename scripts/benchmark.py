@@ -24,7 +24,7 @@ RESULTS = ROOT / "benchmark_results.json"
 SR = 16_000
 CLIP_SECONDS = 10
 MODELS = ["small", "large-v3-turbo"]
-RUNS = 3  # timed runs per clip, after one warm-up
+RUNS = 3 # timed runs per clip, after one warm-up
 
 PROMPTS = {
     "de": "Hallo, ich teste gerade meine Diktiersoftware. Morgen früh muss ich in die "
@@ -82,7 +82,7 @@ class Sampler:
         self.ncpu = psutil.cpu_count()
         self.cpu, self.rss = [], []
         self._stop = threading.Event()
-        self.proc.cpu_percent(None)  # prime
+        self.proc.cpu_percent(None) # prime
         self._t = threading.Thread(target=self._run, daemon=True)
         self._t.start()
 
@@ -115,7 +115,7 @@ def worker(model_name, threads, beam):
     tr = Transcriber(model=model_name, cpu_threads=threads, beam_size=beam)
     load_s = time.perf_counter() - t0
 
-    tr.transcribe(clips["de"])  # warm-up (first call has one-time costs)
+    tr.transcribe(clips["de"]) # warm-up (first call has one-time costs)
 
     out = {"model": model_name, "threads": threads, "beam": beam, "load_s": load_s,
            "rss_before_mb": rss_before, "clips": {}}
@@ -172,7 +172,7 @@ def main():
     results = []
     for m in args.models:
         print(f"\n=== {m}: downloading (if needed) ===", flush=True)
-        download_model(m)  # keep download time out of load time
+        download_model(m) # keep download time out of load time
         for beam in args.beams:
             print(f"=== {m}: benchmarking, {args.threads} threads, beam {beam} "
                   f"({RUNS} runs per clip after warm-up) ===", flush=True)
