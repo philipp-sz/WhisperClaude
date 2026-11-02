@@ -97,7 +97,7 @@ A bullet item ends at the end of its sentence. Sentences that only contain "new 
 - Status pill with three styles (`[pill] style`): color waves, gradient bars or plain bars. Quiet microphones get more gain, so the waves stay visible.
 - Local history of the last 5 dictations in `%LOCALAPPDATA%\WhisperClaude\history.json`, readable only by the Windows user. `[history] keep = 0` turns it off and deletes the file.
 - Works offline after the first model download. Logs never contain transcript text.
-- 0.3–0.6% of one CPU core and 0% GPU while idle.
+- 0% GPU while idle. CPU: 0.07% of one core with the CPU backend, 6–9% with the Intel iGPU backend (a thread in Intel's OpenCL runtime, see [docs](docs/transcription.md#idle-cpu-with-the-igpu-backend)).
 
 ## How it works
 

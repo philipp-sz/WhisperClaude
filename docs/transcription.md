@@ -157,4 +157,18 @@ The whole app (Whisper turbo on the iGPU plus NLLB in one process) uses 2.2 GB o
 
 Battery: the Windows battery rate counter was not usable for single dictations. It stayed on one value for several seconds and drifted with other programs, so idle readings varied between 4.3 and 5.3 W (once 9.5 W) and a loop of dictations gave a value below idle. The energy figures above stay estimates; CPU and GPU seconds per audio minute are the comparable numbers.
 
+### Idle CPU with the iGPU backend
+
+While idle, the app used 6–9% of one core (of 8) in every one of 12 runs of the real app, not the 0.3–0.6% measured before. It is kernel time in a single thread. With `device = "cpu"` the idle load is 0.07%, and the translation model is not involved (7.6% without it). An app that had run since the evening before showed the same 7.5% as a fresh start, so it does not grow with uptime.
+
+The thread belongs to Intel's OpenCL runtime (`igdrcl64.dll`, loaded by OpenVINO's GPU plugin; Arc 140V driver 32.0.101.8132). Sampling the busy thread (300 samples) showed it in a timed wait loop of that DLL, and 14% of the samples were inside `timeBeginPeriod`, `timeEndPeriod` and `ZwSetTimerResolution`: the runtime changes the system timer resolution every few milliseconds while idle. The cost depends on the timer state of the system. While a second process held `timeBeginPeriod(1)`, the app's idle load fell from 8.4% to 2.7% and went back to 7% afterwards. Processes that only load the model burned 0% in five runs in a row at one time and 8–10% at another; the real app burned every time.
+
+Tried without effect:
+
+- Intel runtime debug keys in the environment (`NEOReadDebugKeys=1` with `DirectSubmissionControllerTimeout=100000`, `EnableDirectSubmissionController=0` or `EnableDirectSubmission=0`): 3 interleaved rounds each on the real app gave 6.5–8.7% in all 12 runs, baseline included. The runtime printed none of its settings, so it ignores the environment; on Windows the keys are read from the registry and need administrator rights.
+- Deleting the pipeline: the load stayed in 2 of 3 runs.
+- Loading the model on a worker thread, opening the microphone, a Tk window or running an inference: no systematic change.
+
+Not tried: a separate process for the iGPU model that is stopped when idle (ends the load, costs a reload of about 3 s and is a larger change), holding `timeBeginPeriod(1)` in the app (cut the load by two thirds in the test above, but forces a 1 ms system timer, which costs power itself), other driver or OpenVINO versions. The power cost of 7% of one core could not be measured (the battery counter varies by ±0.5 W, and this laptop has no package power counters); the load is about 0.9% of the CPU's capacity.
+
 Still open: a quiet microphone. The dictation errors seen in real use may come from the low input level. Compare the corpus WER at the current Windows input level and at a higher one.

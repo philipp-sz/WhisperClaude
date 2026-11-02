@@ -62,7 +62,7 @@ Desktop: Core i5-10600K with RTX 4070. `large-v3` (float16, beam 5) transcribes 
 
 Translation of a 3-sentence dictation: 0.77 s with NLLB-600M on the Core i5-10600K (4 threads), 0.35 s with NLLB-1.3B on the RTX 4070, 0.4 s with NLLB-600M and 0.6 s with NLLB-1.3B on the laptop's CPU (4 threads). On FLORES-200 (12 directions, 200 sentences each), NLLB-600M scored 85.2 COMET, NLLB-1.3B 86.7 and M2M100-418M 81.7. NLLB-1.3B is the default unless RAM (CPU) or free VRAM (NVIDIA GPU) is short.
 
-While idle, the app uses 0.3–0.6% of one CPU core and no GPU time.
+While idle, the app uses no GPU time and 0.07% of one CPU core on the CPU backend. With the Intel iGPU backend it uses 6–9% of one core on the laptop, because a thread in Intel's OpenCL runtime keeps changing the system timer resolution (see [transcription.md](transcription.md#idle-cpu-with-the-igpu-backend)).
 
 ## Backend limitations
 
