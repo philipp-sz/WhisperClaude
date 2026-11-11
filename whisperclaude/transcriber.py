@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import zlib
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -28,6 +30,32 @@ LEAD_IN_S = 0.5 # silence put before every chunk (see _join)
 OV_CACHE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "WhisperClaude" / "ov_cache"
 
 
+LOOP_RATIO = 2.4 # Whisper's own compression-ratio limit; normal chunks: at most 1.9 (measured)
+LOOP_WORDS_PER_S = 6.0 # speech has at most ~4 words/s (measured 3.5); only above LOOP_MIN_WORDS
+LOOP_MIN_WORDS = 20
+RETRY_PENALTY = 1.1 # logits of tokens already produced are divided by this in the retry
+_REPEATS = re.compile(r"\b(\S+(?:\s+\S+){0,3}?)(?:\s+\1\b){3,}")
+
+
+def is_loop(text: str, seconds: float) -> bool:
+    """True if a chunk's text is a decoding loop ("dx dx dx ...") rather than speech.
+
+    Repetition compresses well: zlib shrinks a loop far below the 1/2.4 of its length that
+    normal text never reaches. A loop also produces more words than anyone can speak.
+    """
+    data = text.encode("utf-8")
+    if not data:
+        return False
+    ratio = len(data) / len(zlib.compress(data))
+    words = len(text.split())
+    return ratio > LOOP_RATIO or (words > LOOP_MIN_WORDS and words / max(seconds, 1e-3) > LOOP_WORDS_PER_S)
+
+
+def collapse_repeats(text: str) -> str:
+    """Runs of the same word or phrase (up to 4 words, 4+ times in a row) -> one occurrence."""
+    return _REPEATS.sub(r"\1", text)
+
+
 def build_prompt(prompt: str | None, vocabulary: Sequence[str] = ()) -> str | None:
     """Append custom words so Whisper spells them right ("Klot" -> "Claude").
 
@@ -37,6 +65,27 @@ def build_prompt(prompt: str | None, vocabulary: Sequence[str] = ()) -> str | No
     if not words:
         return prompt or None
     return f"{prompt} {words}." if prompt else f"{words}."
+
+
+VAD_LEVEL_DBFS = -26.0 # quiet audio is raised to this RMS level, for the VAD only
+VAD_MAX_GAIN_DB = 20.0
+
+
+def vad_input(audio: np.ndarray) -> np.ndarray:
+    """The audio as the VAD should see it: quiet recordings amplified (never attenuated).
+
+    Silero's speech probability depends on the level: a podcast picked up at -41 dBFS lost
+    three passages (probabilities 0.1-0.4 under the 0.5 threshold). Raising quiet audio to
+    VAD_LEVEL_DBFS (at most VAD_MAX_GAIN_DB) cut the errors on the author's recordings by 11%.
+    Only the VAD sees the gain; the model gets the original audio.
+    """
+    rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) if len(audio) else 0.0
+    if rms <= 0.0:
+        return audio
+    gain_db = min(max(VAD_LEVEL_DBFS - 20 * np.log10(rms), 0.0), VAD_MAX_GAIN_DB)
+    if gain_db == 0.0:
+        return audio
+    return np.clip(audio * 10 ** (gain_db / 20), -1.0, 1.0).astype(np.float32)
 
 
 Detect = Callable[[np.ndarray], str] # audio -> language code (one cheap encoder pass)
@@ -59,7 +108,7 @@ def _speech_groups(audio: np.ndarray, detect: Detect | None = None, offset: int 
     before this sample (live: a segment still being spoken is neither detected nor grouped;
     its first second alone was detected wrongly).
     """
-    segments = get_speech_timestamps(audio, VadOptions(max_speech_duration_s=CHUNK_S))
+    segments = get_speech_timestamps(vad_input(audio), VadOptions(max_speech_duration_s=CHUNK_S))
     if until is not None:
         segments = [seg for seg in segments if seg["end"] <= until]
     cache = {} if cache is None else cache
@@ -285,19 +334,42 @@ class OpenVinoTranscriber:
         speech_chunks(silence)
         self._generate([silence])
 
-    def _generate(self, chunks: list[np.ndarray]) -> tuple[str, str]:
+    def _config(self, repetition_penalty: float = 1.0):
         cfg = self.pipeline.get_generation_config()
         cfg.task = "transcribe"
         cfg.return_timestamps = False
         cfg.initial_prompt = self.initial_prompt
+        cfg.repetition_penalty = repetition_penalty
         if self.language:
             cfg.language = f"<|{self.language}|>"
+        return cfg
+
+    def _generate(self, chunks: list[np.ndarray]) -> tuple[str, str]:
+        cfg = self._config()
         texts, language = [], ""
         for chunk in chunks:
             result = self.pipeline.generate(chunk, cfg)
-            texts.append(result.texts[0].strip())
+            text = result.texts[0].strip()
+            if is_loop(text, len(chunk) / SAMPLE_RATE):
+                text = self._decode_again(chunk)
+            texts.append(text)
             language = language or str(result.language or "").strip("<|>")
         return join_chunks(texts), language
+
+    def _decode_again(self, chunk: np.ndarray) -> str:
+        """A chunk that came out as a repetition loop, decoded again with a repetition penalty.
+
+        Greedy decoding can't leave a loop once a repeat is the likeliest next token. The penalty
+        divides the logits of tokens already produced by RETRY_PENALTY, enough to end the loop
+        in the case seen ("x² dx dx dx ..." 368 times -> "x² dx"); beam search found it too
+        but is not implemented on the iGPU. Only looped chunks pay for it. If the retry loops
+        too, the repeats are collapsed, so no speech around the loop is dropped.
+        """
+        text = self.pipeline.generate(chunk, self._config(RETRY_PENALTY)).texts[0].strip()
+        looped = is_loop(text, len(chunk) / SAMPLE_RATE)
+        log.warning("repetition loop in a %.0f s chunk; decoded again with a repetition penalty%s",
+                    len(chunk) / SAMPLE_RATE, ", still looping: repeats collapsed" if looped else "")
+        return collapse_repeats(text) if looped else text
 
     def detect_language(self, audio: np.ndarray) -> str:
         """Spoken language of a short piece of audio: one encoder pass, no decoding."""
