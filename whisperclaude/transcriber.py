@@ -246,6 +246,10 @@ class Transcriber:
         text = join_chunks(s.text for s in segments)
         return text, info.language
 
+    def count_tokens(self, text: str) -> int:
+        """Whisper tokens of a text (for the prompt budget of the automatic vocabulary)."""
+        return len(self.model.hf_tokenizer.encode(text, add_special_tokens=False).ids)
+
     def transcribe(self, audio: np.ndarray) -> str:
         """Return the transcript of a 1-D float32 array at 16 kHz."""
         return self.transcribe_detailed(audio)[0]
@@ -328,6 +332,7 @@ class OpenVinoTranscriber:
         OV_CACHE.mkdir(parents=True, exist_ok=True)
         # CACHE_DIR keeps the compiled GPU kernels: first start ~15 s, later < 1 s.
         self.pipeline = openvino_genai.WhisperPipeline(path, device, CACHE_DIR=str(OV_CACHE))
+        self.tokenizer_file = Path(path) / "tokenizer.json"
         # The first dictation was ~0.8 s slower (GPU setup in the first generate(), VAD model
         # loaded on first use): pay that here, on the loader thread.
         silence = np.zeros(SAMPLE_RATE, np.float32)
@@ -387,6 +392,14 @@ class OpenVinoTranscriber:
 
     def transcribe(self, audio: np.ndarray) -> str:
         return self.transcribe_detailed(audio)[0]
+
+    def count_tokens(self, text: str) -> int:
+        """Whisper tokens of a text (for the prompt budget of the automatic vocabulary)."""
+        from tokenizers import Tokenizer
+
+        if getattr(self, "_tokenizer", None) is None:
+            self._tokenizer = Tokenizer.from_file(str(self.tokenizer_file))
+        return len(self._tokenizer.encode(text, add_special_tokens=False).ids)
 
     def transcribe_chunks(self, chunks: list[np.ndarray]) -> str:
         return self._generate(chunks)[0]
@@ -560,6 +573,9 @@ class CudaTranscriber(OpenVinoTranscriber):
 
     def detect_language(self, audio: np.ndarray) -> str:
         return self.model.detect_language(np.asarray(audio, dtype=np.float32))[0]
+
+    def count_tokens(self, text: str) -> int:
+        return len(self.model.hf_tokenizer.encode(text, add_special_tokens=False).ids)
 
 
 def create_transcriber(

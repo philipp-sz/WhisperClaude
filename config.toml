@@ -30,6 +30,11 @@ initial_prompt = "Hallo, das ist ein Test. Okay, so let's see how this works, an
 # Fixed in tests: "Klot" -> "Claude", "Gmini" -> "Gemini"; "cloud" + "Claude" together work.
 # Keep the list short (it shares ~220 tokens with the prompt).
 vocabulary = ["Claude", "cloud", "Gemini", "VS Code", "iGPU"]
+# Automatic vocabulary: at each start, your own notes and docs in these folders (.md, .txt) are
+# scanned for names and terms that Whisper's tokenizer doesn't know as whole words; the best
+# ones (recent files count more) are added to the prompt within its token budget, at most 40.
+# Fewer wrong names than the manual list in tests. [] = off. Nothing leaves the machine.
+vocabulary_sources = ["~/code", "~/projects"]
 
 [recording]
 # A recording with no speech for this long was probably forgotten: it stops by itself, and the

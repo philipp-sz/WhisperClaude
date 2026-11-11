@@ -119,7 +119,8 @@ def spawn_new_instance() -> None:
 
 def create_from_config(m: ModelConfig, on_status=lambda text: None):
     """The transcriber for the [model] settings (heavy import, so only on worker threads)."""
-    from whisperclaude.transcriber import create_transcriber
+    from whisperclaude.transcriber import build_prompt, create_transcriber
+    from whisperclaude.vocabulary import auto_vocabulary
 
     transcriber = create_transcriber(
         device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model, on_status=on_status,
@@ -127,6 +128,9 @@ def create_from_config(m: ModelConfig, on_status=lambda text: None):
         vocabulary=m.vocabulary, compute_type=m.compute_type, beam_size=m.beam_size,
         cpu_threads=m.cpu_threads, batch_size=m.batch_size,
     )
+    auto = auto_vocabulary(m.vocabulary_sources, m.initial_prompt, m.vocabulary, transcriber.count_tokens)
+    if auto:
+        transcriber.initial_prompt = build_prompt(m.initial_prompt or None, [*m.vocabulary, *auto])
     return transcriber
 
 
