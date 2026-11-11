@@ -1,4 +1,5 @@
-"""Loop guard and VAD input level of transcriber.py, without models."""
+"""Loop guard, VAD input level and the GPU probe of transcriber.py, without models."""
+import subprocess
 from types import SimpleNamespace
 
 import numpy as np
@@ -98,3 +99,18 @@ def test_quiet_speech_is_found(monkeypatch):
     monkeypatch.setattr(tr, "get_speech_timestamps", lambda audio, opts: seen.append(level_db(audio)) or [])
     tr._speech_groups((np.random.default_rng(1).standard_normal(16_000) * 0.01).astype(np.float32))
     assert seen == [pytest.approx(-26.0, abs=0.2)]
+
+
+@pytest.mark.parametrize("returncode, found", [(0, True), (1, False)])
+def test_gpu_present(monkeypatch, returncode, found):
+    """Test that the probe's exit code says whether the GPU is there."""
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=returncode))
+    assert tr.gpu_present("igpu") is found
+
+
+def test_gpu_present_survives_a_hanging_probe(monkeypatch):
+    """Test that a probe that times out counts as no GPU instead of raising."""
+    def hang(*a, **kw):
+        raise subprocess.TimeoutExpired("python", 60)
+    monkeypatch.setattr(subprocess, "run", hang)
+    assert tr.gpu_present("cuda") is False

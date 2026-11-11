@@ -28,11 +28,11 @@ from typing import TYPE_CHECKING
 
 import psutil
 
-from whisperclaude.app import QUIT, RESTART, App, State, WakeQueue
+from whisperclaude.app import QUIT, RELOADED, RESTART, App, State, WakeQueue
 from whisperclaude.commands import apply_commands
 from whisperclaude.config import (CONFIG_PATH, Config, ConfigError, ModelConfig,
                                   TranslationConfig, load_config)
-from whisperclaude import lifecycle
+from whisperclaude import lifecycle, recovery
 from whisperclaude.hotkey import GapDetector, key_label, parse_key, start_hotkey_listener
 from whisperclaude.history import History
 from whisperclaude.inserter import ClipboardError, copy_text, paste_text
@@ -61,6 +61,7 @@ LOADED = "loaded" # payload: transcriber
 LOAD_FAILED = "load_failed" # payload: error text
 LOAD_STATUS = "load_status" # payload: text for the start pill ("Preparing GPU…")
 COPIED = "copied" # payload: feedback after "Copy" (pill button or tray menu)
+PROBED = "probed" # payload: True if the missing GPU was found again (recovery.py)
 
 
 def setup_logging() -> Path:
@@ -116,25 +117,33 @@ def spawn_new_instance() -> None:
                       RESTARTED_FLAG], cwd=CONFIG_PATH.parent, creationflags=flags, close_fds=True)
 
 
-def _load_whisper(events: WakeQueue, m: ModelConfig) -> bool:
-    """Loader thread: Whisper. The outcome arrives as a LOADED / LOAD_FAILED event."""
-    try:
-        from whisperclaude.transcriber import create_transcriber
+def create_from_config(m: ModelConfig, on_status=lambda text: None):
+    """The transcriber for the [model] settings (heavy import, so only on worker threads)."""
+    from whisperclaude.transcriber import create_transcriber
 
+    transcriber = create_transcriber(
+        device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model, on_status=on_status,
+        language=m.language or None, initial_prompt=m.initial_prompt or None,
+        vocabulary=m.vocabulary, compute_type=m.compute_type, beam_size=m.beam_size,
+        cpu_threads=m.cpu_threads, batch_size=m.batch_size,
+    )
+    return transcriber
+
+
+def _load_whisper(events: WakeQueue, m: ModelConfig, quiet: bool = False) -> bool:
+    """Loader thread: Whisper. The outcome arrives as a LOADED / LOAD_FAILED event; `quiet`
+    (a reload in the background) shows no status texts."""
+    try:
         t0 = time.perf_counter()
-        transcriber = create_transcriber(
-            device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model,
-            on_status=lambda text: events.put((LOAD_STATUS, text)),
-            language=m.language or None, initial_prompt=m.initial_prompt or None,
-            vocabulary=m.vocabulary, compute_type=m.compute_type, beam_size=m.beam_size,
-            cpu_threads=m.cpu_threads, batch_size=m.batch_size,
-        )
+        status = (lambda text: None) if quiet else (lambda text: events.put((LOAD_STATUS, text)))
+        transcriber = create_from_config(m, status)
         log.info("model loaded in %.1f s", time.perf_counter() - t0)
         events.put((LOADED, transcriber))
         return True
     except Exception as e:
         log.exception("could not load a model")
-        events.put((LOAD_FAILED, str(e)))
+        if not quiet:
+            events.put((LOAD_FAILED, str(e)))
         return False
 
 
@@ -233,6 +242,8 @@ class Session:
         self.events = WakeQueue()
         self.stopped = False
         self.gap = GapDetector()
+        self.watch = recovery.GpuWatch()
+        self.upgrade = None # a model loaded on the returned GPU, waiting for the app to be idle
         self.last_poll = self.last_beat = time.monotonic()
         self._build_ui()
         self._build_app()
@@ -279,9 +290,12 @@ class Session:
         self.app = App(self.recorder, None, paste, self.events, self.on_state, postprocess,
                        stop_after_silence_s=cfg.recording.stop_after_silence_s,
                        remember=self.remember, on_pasted=self.on_pasted, on_kept=self.on_kept,
-                       translation=self.translation)
+                       translation=self.translation,
+                       reload=lambda: create_from_config(self.cfg.model))
         self.app.handlers = {
             LOADED: self.on_loaded,
+            RELOADED: self.on_reloaded,
+            PROBED: self.on_probed,
             LOAD_FAILED: self.on_load_failed,
             LOAD_STATUS: lambda text: self.overlay.set_starting_text(str(text)),
             COPIED: self.on_copied,
@@ -339,10 +353,12 @@ class Session:
         self.overlay.show_pasted(lambda: self.copy_to_clipboard(text), KEPT_S, label=msg)
 
     def on_loaded(self, transcriber: Transcriber | OpenVinoTranscriber) -> None:
+        if self.app.state != State.LOADING: # a background reload: the GPU is back
+            self.upgrade = transcriber
+            self._apply_upgrade()
+            return
         self.app.set_transcriber(transcriber)
-        device = transcriber.device # "CUDA", "GPU" / "GPU.1" (OpenVINO, Intel) or "CPU"
-        self.tray.engine = ("NVIDIA GPU" if device == "CUDA" else
-                            "iGPU" if device.startswith("GPU") else "CPU")
+        self._note_device(transcriber)
         self.tray.set_state(State.IDLE)
         if self.config_error:
             self.overlay.show_message(self.config_error, seconds=6)
@@ -350,6 +366,63 @@ class Session:
             self.overlay.show_ready(f"Ready: tap {self.hotkey}")
         log.info("ready (%s on %s, hotkey %s)", type(transcriber).__name__, transcriber.device,
                  self.cfg.hotkey.key)
+
+    def _note_device(self, transcriber: Transcriber | OpenVinoTranscriber) -> None:
+        """Tray label, the remembered device, and whether to watch for a missing GPU."""
+        kind = recovery.device_kind(transcriber.device)
+        self.tray.engine = {"cuda": "NVIDIA GPU", "igpu": "iGPU", "cpu": "CPU"}[kind]
+        expected = recovery.last_device(self.data_dir)
+        self.watch.loaded(kind, expected)
+        if self.watch.missing:
+            log.warning("running on the CPU although the last start used the %s; looking for it again",
+                        self.watch.missing)
+        else:
+            recovery.remember_device(self.data_dir, kind)
+
+    def _apply_upgrade(self) -> None:
+        """Swaps in the model loaded on the returned GPU once nothing is running."""
+        if self.upgrade is None or self.app.state != State.IDLE:
+            return
+        transcriber, self.upgrade = self.upgrade, None
+        if recovery.device_kind(transcriber.device) == "cpu": # the GPU was seen but did not load
+            log.warning("the GPU did not load; staying on the CPU model and looking again later")
+            self.watch.loaded("cpu", recovery.last_device(self.data_dir))
+            return
+        self.app.set_transcriber(transcriber)
+        self._note_device(transcriber)
+        self.tray.refresh()
+        log.info("switched to %s on %s", type(transcriber).__name__, transcriber.device)
+        self.overlay.show_message("GPU available again", seconds=3)
+
+    def on_reloaded(self, transcriber: object) -> None:
+        """The worker loaded the model again after a failed transcription."""
+        log.info("model reloaded on %s", transcriber.device)
+        self._note_device(transcriber)
+        self.tray.refresh()
+
+    def _start_probe(self) -> None:
+        """Looks for the missing GPU in a subprocess (worker thread); the answer comes as PROBED."""
+        kind = self.watch.missing
+
+        def run() -> None:
+            from whisperclaude.transcriber import gpu_present
+
+            self.events.put((PROBED, gpu_present(kind)))
+
+        threading.Thread(target=run, daemon=True, name="gpu-probe").start()
+
+    def on_probed(self, found: object) -> None:
+        kind = self.watch.missing
+        if self.watch.probe_done(bool(found)):
+            log.warning("the %s is still missing; telling the user", kind)
+            self.tray.engine = "CPU (GPU missing)"
+            self.tray.refresh()
+            self.overlay.show_message("GPU not found: running slower on the CPU. Restarting Windows usually helps.",
+                                      seconds=8)
+        if found:
+            log.info("the %s is back; loading the model on it in the background", kind)
+            threading.Thread(target=_load_whisper, args=(self.events, self.cfg.model, True),
+                             daemon=True, name="model-reloader").start()
 
     def on_load_failed(self, message: object) -> None:
         self.overlay.show_message("Could not load the model (see log)", seconds=None)
@@ -392,6 +465,9 @@ class Session:
             log.info("resume detected (%.0f s gap): re-arming hotkey, refreshing audio", slept)
             self.listener.restart()
             self.recorder.refresh_devices()
+        if self.watch.due(resumed=bool(slept)):
+            self._start_probe()
+        self._apply_upgrade()
         if now - self.last_beat >= HEARTBEAT_S:
             self.last_beat = now
             lifecycle.heartbeat(self.data_dir)

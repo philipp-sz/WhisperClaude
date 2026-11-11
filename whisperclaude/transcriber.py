@@ -471,6 +471,32 @@ def cuda_choice(model: str, free_mb: int | None) -> tuple[str, str]:
     return ("large-v3" if free_mb >= LOW_VRAM_MB else GPU_MODEL), "int8_float16"
 
 
+_PROBES = {
+    "igpu": ("import openvino as ov, sys; c = ov.Core(); sys.exit(0 if any(d.startswith('GPU') and 'intel' in "
+             "str(c.get_property(d, 'FULL_DEVICE_NAME')).lower() for d in c.available_devices) else 1)"),
+    "cuda": "import ctranslate2, sys; sys.exit(0 if ctranslate2.get_cuda_device_count() > 0 else 1)",
+}
+
+
+def gpu_present(kind: str, timeout_s: float = 60.0) -> bool:
+    """Whether a GPU of `kind` ("igpu" / "cuda") can be seen now, checked in a fresh process.
+
+    In the running process a vanished device may stay vanished (the device list is read once
+    per plugin), so a short-lived subprocess asks instead (0.4 s measured), only run while
+    the app is on its CPU fallback (see recovery.py).
+    """
+    import subprocess
+    import sys
+
+    try:
+        done = subprocess.run([sys.executable, "-c", _PROBES[kind]], timeout=timeout_s, capture_output=True,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return done.returncode == 0
+    except Exception:
+        log.info("GPU check (%s) failed", kind, exc_info=True)
+        return False
+
+
 def cuda_available() -> bool:
     """True if there is an NVIDIA GPU and the CUDA libraries of the [cuda] extra are installed."""
     try:

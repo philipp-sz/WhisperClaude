@@ -37,6 +37,7 @@ UNPICK = "unpick" # worker -> Tk: close the picker, nothing to translate; payloa
 KEPT = "kept" # worker -> Tk: saved to the history but not pasted; payload: (text, message)
 GUESS = "guess" # worker -> Tk: detected source languages of a dictation; payload: (job, codes)
 TRANSLATING = "translating" # worker -> Tk: the translation itself has started
+RELOADED = "reloaded" # worker -> Tk: the model was loaded again after a failure; payload: transcriber
 
 MIN_AUDIO_S = 0.3
 LIVE_FEED_S = 5.0 # while recording, hand the audio so far to the live transcription this often
@@ -203,6 +204,7 @@ class App:
         on_pasted: Callable[[str], None] | None = None, # after a paste (Tk thread)
         on_kept: Callable[[str, str], None] | None = None, # (text, message): not pasted
         translation: TranslationLike | None = None, # None = translate key off
+        reload: Callable[[], TranscriberLike] | None = None, # loads the model again (worker thread)
     ) -> None:
         """transcriber=None starts in LOADING; call set_transcriber() once it's ready.
 
@@ -222,6 +224,7 @@ class App:
         self.on_pasted = on_pasted
         self.on_kept = on_kept
         self.translation = translation
+        self.reload = reload
         self.state = State.IDLE if transcriber is not None else State.LOADING
         self.exit_reason: str | None = None
         # Extra event kinds (e.g. "model loaded" from the loader thread) -> handler(payload)
@@ -487,7 +490,12 @@ class App:
         error is reported and the picker closed."""
         try:
             t0 = time.perf_counter()
-            text = live.finish(audio) if live else self.transcriber.transcribe(audio)
+            try:
+                text = live.finish(audio) if live else self.transcriber.transcribe(audio)
+            except Exception:
+                if self.reload is None:
+                    raise
+                text = self._reload_and_retry(audio)
             early = getattr(live.live, "done_s", 0.0) if live else 0.0
             log.info("transcribed %.1f s audio in %.2f s after the stop (%.0f s while recording)",
                      len(audio) / SAMPLE_RATE, time.perf_counter() - t0, early)
@@ -498,6 +506,15 @@ class App:
                 self.events.put((UNPICK, job))
             self.events.put((ERROR, str(e)))
             return None
+
+    def _reload_and_retry(self, audio: np.ndarray) -> str:
+        """Worker thread: the model failed (e.g. the GPU driver was reset); load it again (on the
+        GPU if it is there, else the fallback) and transcribe the same audio, so the dictation
+        is not lost. Safe here: in TRANSCRIBING nothing else uses the transcriber."""
+        log.exception("transcription failed; loading the model again and retrying once")
+        self.transcriber = self.reload()
+        self.events.put((RELOADED, self.transcriber))
+        return self.transcriber.transcribe(audio)
 
     def _postprocessed(self, text: str) -> str:
         """Spoken commands, if on. Judged on the raw text before: dictating only "command new

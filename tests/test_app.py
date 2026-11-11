@@ -648,3 +648,47 @@ def test_dictation_guess_reaches_the_open_picker():
     t.answer("fra_Latn")
     pump_until(app, lambda: app.state is State.IDLE)
     assert t.sources == [None] and pasted == ["[fra_Latn] hallo welt"]
+
+
+class FailingTranscriber:
+    """Raises like a model whose GPU was reset."""
+
+    def transcribe(self, audio):
+        raise RuntimeError("device lost")
+
+
+class InstantTranscriber:
+    def __init__(self, text="hallo welt"):
+        self.text = text
+
+    def transcribe(self, audio):
+        return self.text
+
+
+def run_dictation(app):
+    """Toggle on and off, then handle the worker's events until the paste is done."""
+    app.handle(TOGGLE)
+    app.handle(TOGGLE)
+    events = []
+    while app.state is not State.IDLE:
+        kind, payload = app.events.get(timeout=5)
+        events.append(kind)
+        app.handle(kind, payload)
+    return events
+
+
+def test_failed_transcription_reloads_and_retries():
+    """Test that a failing model is loaded again and the same dictation is still pasted."""
+    pasted, reloaded = [], InstantTranscriber("gerettet")
+    app = App(FakeRecorder(), FailingTranscriber(), pasted.append, reload=lambda: reloaded)
+    events = run_dictation(app)
+    assert pasted == ["gerettet"]
+    assert app.transcriber is reloaded and app_module.RELOADED in events
+
+
+def test_failed_reload_reports_the_error():
+    """Test that a reload that fails too ends in an error message, not a stuck state."""
+    def broken():
+        raise RuntimeError("no model")
+    app = App(FakeRecorder(), FailingTranscriber(), lambda text: None, reload=broken)
+    assert app_module.ERROR in run_dictation(app)
