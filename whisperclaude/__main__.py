@@ -480,8 +480,30 @@ class Session:
             self.root.after(BACKUP_POLL_MS, self.backup_poll)
 
 
+def lean_cpu_math(ram_gb: float | None) -> bool:
+    """Below MIN_RAM_GB of RAM, CTranslate2 (NLLB, Whisper on the CPU) runs without Intel's MKL.
+
+    With MKL, CTranslate2 commits memory it never touches: NLLB-1.3B 5.3 GB private against 1.4
+    GB in use, Whisper small 2.7 against 0.6 GB. That is not RAM, but it counts against the
+    commit limit (RAM + page file), which is tight on small machines. Without MKL (oneDNN) the
+    commit equals the use and the output stayed the same (NLLB: 8 of 8 sentences identical), at
+    2.2x the translation time and 1.2x Whisper small's (measured 2026-11-11). Big machines keep
+    the speed. Must run before ctranslate2 is first imported.
+    """
+    from whisperclaude.translator import MIN_RAM_GB
+
+    lean = ram_gb is not None and ram_gb < MIN_RAM_GB
+    if lean:
+        os.environ.setdefault("CT2_USE_MKL", "0")
+    return lean
+
+
 def main() -> None:
     log_path = setup_logging()
+    from whisperclaude.translator import MIN_RAM_GB, total_ram_gb
+
+    if lean_cpu_math(total_ram_gb()):
+        log.info("less than %d GiB of RAM: CTranslate2 without MKL (less committed memory)", MIN_RAM_GB)
     mutex = claim_instance(log_path.parent)
     if mutex is not None:
         Session(log_path, mutex).run()

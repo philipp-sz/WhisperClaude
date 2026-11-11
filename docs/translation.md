@@ -44,3 +44,7 @@ Test: 200 sentences of FLORES-200 devtest in each of 12 directions (German, Engl
 | German only | 20 | 15 | 15 |
 
 Configured languages fix the short phrases in that language. Leaving out English costs English phrases, so the config comment asks to include it.
+
+## Committed memory and MKL (2026-11-11)
+
+On Intel CPUs CTranslate2 uses Intel's MKL for its matrix products. With int8 weights MKL commits memory that it never touches: NLLB-1.3B shows 5.3 GB of private memory but uses 1.4 GB (working set), NLLB-600M 2.3 against 0.7 GB, Whisper `small` on the CPU 2.7 against 0.6 GB. Committed memory is neither RAM nor disk, but it counts against the commit limit (RAM + page file), so on a small machine other programs could fail to get memory. `CT2_USE_MKL=0` switches CTranslate2 to oneDNN: commit equals use (NLLB-1.3B 1.4 GB), the translations were identical (8 of 8 sentences), but translating took 2.2 times as long (0.98 s against 0.44 s per sentence) and Whisper `small` 1.2 times (6.2 s against 5.1 s for 58 s of audio). The app therefore turns MKL off only below 12 GiB of RAM (`lean_cpu_math` in `__main__`, the same threshold that picks NLLB-600M); an explicit `CT2_USE_MKL` in the environment wins.

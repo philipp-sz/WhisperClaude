@@ -1,4 +1,4 @@
-"""The Session's GPU recovery wiring (__main__): first load, upgrade when idle, notice, background reload."""
+"""__main__ startup decisions: GPU recovery wiring (first load, upgrade when idle, notice, reload), CPU math."""
 from types import SimpleNamespace
 
 import pytest
@@ -85,3 +85,14 @@ def test_probe_result(tmp_path, monkeypatch, found):
     assert (len(started), len(messages)) == ((1, 0) if found else (0, 1))
     if found:
         assert started[0][2] is True # quiet: no status texts on the pill
+
+
+@pytest.mark.parametrize("ram_gb, lean", [(7.5, True), (11.9, True), (15.5, False), (31.5, False), (None, False)])
+def test_lean_cpu_math_only_on_small_machines(monkeypatch, ram_gb, lean):
+    """Test that MKL is switched off only below the RAM threshold (and an explicit setting wins)."""
+    monkeypatch.delenv("CT2_USE_MKL", raising=False)
+    assert main.lean_cpu_math(ram_gb) is lean
+    assert main.os.environ.get("CT2_USE_MKL") == ("0" if lean else None)
+    monkeypatch.setenv("CT2_USE_MKL", "1")
+    main.lean_cpu_math(ram_gb)
+    assert main.os.environ["CT2_USE_MKL"] == "1"
