@@ -26,11 +26,17 @@ The app then selects the Whisper backend:
 - Intel GPU or iGPU: `large-v3-turbo` (int8) through OpenVINO GenAI. The compiled kernels are cached, so only the first start takes about 15 s.
 - CPU, or if loading fails: Whisper `small` (int8) through faster-whisper.
 
+If the GPU is missing (on 2026-11-10 the iGPU vanished after a wake until Windows was restarted), the app does not stay on the CPU silently. It remembers the device of the last good start (`device.txt` in the data folder). A CPU start on a machine that last ran on a GPU counts as degraded: a minute after the start, at every wake and every 5 minutes it checks for the GPU in a short-lived subprocess (0.4 s; a vanished device can stay vanished inside the running process). When the GPU is back, the model is loaded on it in the background and replaces the CPU model as soon as nothing is running. Only after two failed checks does the pill say so (restarting Windows is what helped). A transcription that fails (for example after a GPU driver reset) loads the model again and transcribes the same audio once more, so the dictation is not lost. Code: `recovery.py`, `gpu_present()` in `transcriber.py`.
+
+The NPU of Intel Core Ultra laptops can run Whisper turbo at about the iGPU's speed, but in OpenVINO GenAI 2026.4 not with a prompt, and without the prompt it translated whole German recordings into English (19% errors on the author's recordings against 4.7%). It is therefore not a fallback tier yet; see [real-recordings.md](real-recordings.md).
+
 The reasons for each choice are in [transcription.md](transcription.md).
 
 ## Chunking
 
-Voice activity detection cuts the audio at pauses, so no chunk crosses Whisper's 30 s window. Whisper detects one language per chunk. On the GPU paths, segments are therefore merged only if their detected language matches. Otherwise Whisper would translate the second language into the first. Each chunk starts with 0.5 s of silence, which keeps Whisper from skipping the first words. A punctuated example sentence in the dictation languages plus the custom vocabulary is passed as the prompt. It sets the punctuation style and the spelling of names.
+Voice activity detection (Silero, through faster-whisper) cuts the audio at pauses, so no chunk crosses Whisper's 30 s window. Silero rates every 32 ms window with a speech probability; speech starts above 0.5 and ends after 2 s below 0.35, and every segment is padded by 0.4 s. Its probabilities depend on the level, so quiet audio is amplified for the VAD only (to −26 dBFS, at most +20 dB; the model gets the original audio): a quiet recording had lost whole passages. Whisper detects one language per chunk. On the GPU paths, segments are therefore merged only if their detected language matches. Otherwise Whisper would translate the second language into the first. Each chunk starts with 0.5 s of silence, which keeps Whisper from skipping the first words. A punctuated example sentence in the dictation languages plus the custom vocabulary is passed as the prompt. It sets the punctuation style and the spelling of names. The vocabulary is the manual list plus up to 40 words found automatically in the user's own texts (`vocabulary.py`): capitalized words that occur at least 3 times, weighted by file age, and that Whisper's tokenizer splits into several pieces even in lower case, a sign they were rare in its training data. The whole prompt stays within 200 of Whisper's 223 prompt tokens.
+
+Greedy decoding can fall into a loop ("x² dx dx dx ..."). A chunk whose text compresses more than 2.4 times with zlib (Whisper's own criterion; normal text: at most 1.9) or has more than 6 words per second is decoded again with a repetition penalty of 1.1 (beam search, which also found the text, is not implemented on the iGPU). If the retry loops too, the repeats are collapsed. On CUDA and the CPU, faster-whisper's own temperature fallback does this.
 
 While recording, finished chunks are already transcribed. After the stop tap only the last chunk remains, so a 5-minute dictation is pasted 1.3–2.4 s after the tap on the iGPU.
 
@@ -40,7 +46,7 @@ The translation model is NLLB-200, run through CTranslate2 (int8) on an NVIDIA G
 
 ## Keys
 
-A low-level keyboard hook watches for a tap of Left Ctrl alone. Ctrl+C, Ctrl+click and Ctrl+scroll are not taps. The translate key (Left Alt) is detected inside the hook: a tap's key-up is swallowed and replayed behind an unassigned key, so the focused app does not open its menu bar.
+A low-level keyboard hook watches for a tap of Left Ctrl alone. Ctrl+C, Ctrl+click and Ctrl+scroll are not taps. Neither are Ctrl events marked as injected by software: a precision-touchpad pinch reaches apps as Ctrl + wheel, and recordings had started by themselves while two fingers were on the touchpad. The translate key (Left Alt) is detected inside the hook: a tap's key-up is swallowed and replayed behind an unassigned key, so the focused app does not open its menu bar.
 
 ## Clipboard and history
 

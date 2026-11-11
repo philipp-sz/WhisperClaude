@@ -123,6 +123,12 @@ Corpus: 13 texts read by the author (about 25 s each; German, English, mixed, Ge
 
 Every 5 s while recording, the audio so far is passed to the VAD. A chunk is transcribed once a later chunk has started and the chunk ends more than 5 s before the newest audio. On a 313 s clip, the time from the stop tap to the text fell from 8–13 s to 0.9 s on the iGPU and from 28 s to 6.6 s on the CPU. With language-aware grouping, a 5-minute dictation is pasted 1.3–2.4 s after the stop tap.
 
+## Qwen3-ASR
+
+A search for a better and faster model than Whisper turbo (Granite, Parakeet, Canary, voting) is in [model-search.md](model-search.md).
+
+Evaluated on 2026-11-08 and rejected: 4 to 5 times slower than Whisper turbo on the iGPU for 17–20% fewer errors on English only. Models and code were removed again. Everything that was measured, solved and decided is in [qwen3-asr.md](qwen3-asr.md); do not repeat the evaluation without a new reason (a faster runtime, or an NVIDIA GPU path).
+
 ## Rejected: LLM cleanup
 
 Five local models from 0.27B to 1.2B parameters (llama.cpp, CPU, 11 test cases) were tested for cleaning up the transcript. Models below 1B parameters answered questions in the text, translated mixed text or changed almost nothing. LFM2.5-1.2B fixed misheard words but also translated mixed text and added 1–4 s. Whisper with the prompt was kept without a cleanup step.

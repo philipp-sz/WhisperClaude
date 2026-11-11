@@ -4,6 +4,9 @@
 |---|---|
 | [how-it-works.md](how-it-works.md) | Technical overview: pipeline, backends, chunking, translation, keys, measurements |
 | [transcription.md](transcription.md) | Backend and model choice, precision, decoding, chunking, live transcription, audio preprocessing, rejected LLM cleanup |
+| [qwen3-asr.md](qwen3-asr.md) | Qwen3-ASR evaluation (rejected, removed): runtimes, problems solved, results, decision |
+| [model-search.md](model-search.md) | Search for a better and faster model than Whisper turbo: candidates, results, what was tried |
+| [real-recordings.md](real-recordings.md) | Evaluation on the author's own free speech (2026-11-11): engines, votes, error types, GPU fallback, VAD, NPU, ideas and backlog |
 | [translation.md](translation.md) | Translate key, language picker, translation model comparison, language detection |
 | [interface.md](interface.md) | Status pill rendering and level meter, tray icon, clipboard and history |
 

@@ -88,10 +88,11 @@ A bullet item ends at the end of its sentence. Sentences that only contain "new 
 
 ## Features
 
-- System-wide hotkey. Left Ctrl alone toggles recording. Ctrl+C, Ctrl+click and Ctrl+scroll do not.
+- System-wide hotkey. Left Ctrl alone toggles recording. Ctrl+C, Ctrl+click and Ctrl+scroll do not, and neither do Ctrl events that software sends (a touchpad pinch).
 - Dictation in Whisper's 100 languages, also mixed, with automatic language detection.
 - Translation of selected text or a dictation into 201 languages with NLLB-200, on the GPU or CPU. The source language is detected or picked.
-- Custom vocabulary for names and technical terms.
+- Vocabulary for names and technical terms: a short list of your own, plus an automatic one built at each start from your notes and project docs (`[model] vocabulary_sources`). It picks the words Whisper's tokenizer doesn't know as whole words, favors recent files and stays within the prompt's token budget.
+- Self-healing: if the GPU is missing at start or after a wake, the app runs on the CPU, looks for the GPU again in the background, switches back when it returns, and only says something if it stays missing. A transcription that fails is retried once with a freshly loaded model, so the dictation is not lost. A Whisper repetition loop ("dx dx dx ...") is detected and that chunk is decoded again.
 - Live transcription. Finished 30 s chunks are transcribed while recording continues.
 - The previous clipboard is restored after pasting, including images and files. Dictations are never synced to the cloud clipboard.
 - Status pill with three styles (`[pill] style`): color waves, gradient bars or plain bars. Quiet microphones get more gain, so the waves stay visible.
@@ -100,6 +101,10 @@ A bullet item ends at the end of its sentence. Sentences that only contain "new 
 - 0% GPU while idle.
 
 The technical overview is in [docs/how-it-works.md](docs/how-it-works.md). The experiments and measurements behind each choice are in [docs/](docs/README.md).
+
+## Comparing engines on your own speech
+
+`scripts\compare_gui.py` records what you say and shows what each engine heard, side by side. The Play button replays the selected recording. Write what you really said into the reference box, mark names as `[[Name]]`, and save. Wrong, missing and invented words are highlighted per engine and counted. The recordings and references stay in `bench_audio/real/` (git-ignored), so any engine can be compared later with `scripts\real_eval.py`. Models that need PyTorch (Parakeet, Granite) run through the separate environment of `scripts/model_search`. Results so far: [docs/real-recordings.md](docs/real-recordings.md).
 
 ## Development
 
