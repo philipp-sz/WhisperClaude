@@ -235,3 +235,23 @@ Measured, not built:
 - **Memory**: the running app showed 7.1 GB private memory. Whisper turbo on the iGPU: 1.6 GB private, 1.4 GB working set; NLLB-1.3B: 5.3 GB private but 1.5 GB working set, the same with `int8_float32` and one thread. The cause is Intel's MKL inside CTranslate2 (commit charge, not RAM); below 12 GiB of RAM the app now runs CTranslate2 without it, see [translation.md](translation.md#committed-memory-and-mkl-2026-11-11).
 - **Nemotron 3.5 ASR Streaming 0.6B** (`nvidia/nemotron-3.5-asr-streaming-0.6b`, 2026-06-04, OpenMDW-1.1, safetensors and transformers support, cache-aware FastConformer-RNNT, 40 locales incl. de-DE, punctuation and casing): NVIDIA's model card gives 8.31% WER on German FLEURS (test, 1.12 s chunks) against 4.58% for turbo here (dev split). Not tested: built for low-latency streaming at scale, not accuracy; Parakeet of the same family already lost to turbo. `nemotron-labs-unified-asr-0.6b` (2026-10-27) is only a `.nemo` file (pickle, NeMo); the 30B "Transcribe" models are far too large.
 - **Flicker** (pill and tray icon, random, only while animating, gone when the mouse moves over it): the tray icon is drawn by Explorer, so a shared cause in the display path is likely, matching Intel's Panel Self Refresh (the panel shows a stored frame while the screen is "static"; small animated areas can show stale pixels until a refresh, e.g. a mouse move). Test: turn off Panel Self Refresh in the Intel Graphics Software (Display / Power) and watch whether it stays away. Not caused by an app change found in the code.
+
+## Sound-alike errors (2026-11-11)
+
+The author's most annoying error type ("pickup" for "backup"). Turbo's 149 errors on the recordings (iGPU, before the new pipeline) are 70 substitutions, 54 deletions and 25 insertions. The substitutions, classified by hand:
+
+| Type | About | Examples |
+|---|---|---|
+| Sound-alikes and inflection | 35 | was → dass, "need it" → "needed", compute → computer, noch → auch, ja → da, nicht → nichts, Deckel → Decke, können → kann, habe → hab |
+| Names and technical terms | 19 | Hoare, Bijektion (3×), Claude → cloud, ChatGPT, Ollama, Grok |
+| Spoken formats and math | 7 | "x Quadrat" → x², e-mail address, file path |
+| Compounds split or merged | 4 | draufgekommen → gekommen |
+| Deliberately quiet speech | 3 | Teilaufgabe → "of" |
+
+Sound-alikes are about half of the substitutions and a quarter of all errors, the largest class once names improved. About half of them are colloquial short forms ("hab", "kann", "kenn") where Whisper may have written what was really said; about 13 are true meaning confusions. The audio barely separates them; the meaning does, and turbo's decoder (4 layers, trained on transcripts) is a weak language model.
+
+Options, not built:
+
+1. **N-best rescoring by a small local LLM**: Whisper produces several candidate texts per chunk and the LLM only picks the most plausible one, so it cannot invent, translate or rephrase (the failures of the rejected cleanup). On the iGPU the candidates would have to come from sampling (no beam search there). First measure the ceiling: how often the right word is among the candidates at all.
+2. **`large-v3`** (32 decoder layers): never measured on these recordings (only on FLEURS and the 13-clip corpus, where it was not better than turbo on the author's voice). It is the default on the NVIDIA desktop, so measure it there with `scripts/real_eval.py run whisper` (sound-alikes counted separately).
+3. **Personal language model** (Sprout trained on the author's writing, fused into a CTC/TDT decoder): the most work.
