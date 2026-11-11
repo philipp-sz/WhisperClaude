@@ -164,12 +164,21 @@ class HotkeyListener:
                                        lambda: self._events.put((TRANSLATE, None)),
                                        lambda: self._keyboard.suppress_event())
 
-        def on_press(k: Key | KeyCode | None) -> None:
+        # `injected`: Windows marks key events made by software. A precision-touchpad pinch reaches
+        # apps as Ctrl + wheel with an injected Ctrl press and release; with the wheel part not
+        # passing our mouse hook, that looked like a Ctrl tap and started recordings by itself
+        # (seen with two fingers on the touchpad). Injected record-key events never form a tap;
+        # injected other keys still interrupt one.
+        def on_press(k: Key | KeyCode | None, injected: bool = False) -> None:
+            if injected and k == self._key:
+                return
             tap.press(k)
             if k is not None and k == self._cancel_key: # App ignores it unless recording
                 self._events.put((CANCEL, None))
 
-        def on_release(k: Key | KeyCode | None) -> None:
+        def on_release(k: Key | KeyCode | None, injected: bool = False) -> None:
+            if injected and k == self._key:
+                return
             if tap.release(k):
                 self._events.put((TOGGLE, None))
 

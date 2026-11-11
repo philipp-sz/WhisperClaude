@@ -71,6 +71,32 @@ def test_restart_replaces_hooks_and_still_toggles(fake_listeners):
     assert events.get_nowait() == (hotkey.TOGGLE, None)
 
 
+@pytest.mark.parametrize("press, release, toggles", [
+    (False, False, True), # a real tap
+    (True, True, False), # software-made Ctrl (touchpad pinch): never a tap
+    (False, True, False), # a real press whose release a tool injected
+])
+def test_injected_record_key_is_no_tap(fake_listeners, press, release, toggles):
+    """Test that injected events of the record key cannot toggle a recording."""
+    events = queue.Queue()
+    HotkeyListener(events)
+    kb = next(i for i in fake_listeners.instances if "on_press" in i.callbacks)
+    kb.callbacks["on_press"](hotkey.DEFAULT_KEY, press)
+    kb.callbacks["on_release"](hotkey.DEFAULT_KEY, release)
+    assert (not events.empty()) is toggles
+
+
+def test_injected_other_key_still_interrupts(fake_listeners):
+    """Test that an injected other key (e.g. the app's own paste) still breaks a tap."""
+    events = queue.Queue()
+    HotkeyListener(events)
+    kb = next(i for i in fake_listeners.instances if "on_press" in i.callbacks)
+    kb.callbacks["on_press"](hotkey.DEFAULT_KEY, False)
+    kb.callbacks["on_press"](hotkey.KeyCode.from_char("v"), True)
+    kb.callbacks["on_release"](hotkey.DEFAULT_KEY, False)
+    assert events.empty()
+
+
 # ---------- Recorder: refresh PortAudio's device list ----------
 
 class FakeStream:

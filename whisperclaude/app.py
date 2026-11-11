@@ -425,6 +425,7 @@ class App:
             self._set(State.IDLE, f"Error: {e}")
             return
         self._rec_started = time.monotonic()
+        log.info("recording started")
         make_live = getattr(self.transcriber, "live", None)
         snapshot = getattr(self.recorder, "snapshot", None)
         if make_live is not None and snapshot is not None:
