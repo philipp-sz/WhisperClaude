@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -32,6 +33,7 @@ class Recorder:
         self._stream: sd.InputStream | None = None
         self._closer: threading.Thread | None = None # background close of the last stream
         self.level = 0.0 # RMS of the latest audio block, for the overlay's level bars
+        self._on_first_block: Callable[[], None] | None = None
 
     @property
     def is_recording(self) -> bool:
@@ -41,10 +43,13 @@ class Recorder:
                   status: sd.CallbackFlags) -> None:
         if status:
             log.warning("audio status: %s", status)
+        first, self._on_first_block = self._on_first_block, None
         block = indata[:, 0].copy()
         self.level = float(np.sqrt(np.mean(block * block))) if len(block) else 0.0
         with self._lock:
             self._chunks.append(block)
+        if first is not None:
+            first() # runs on the audio thread: the app only sets an Event here
 
     def _open(self) -> sd.InputStream:
         import sounddevice as sd
@@ -92,12 +97,20 @@ class Recorder:
         except Exception:
             log.exception("could not refresh audio devices")
 
-    def start(self) -> None:
-        """Open the mic and start collecting audio. Raises if no input device works."""
+    def start(self, on_first_block: Callable[[], None] | None = None) -> None:
+        """Open the mic and start collecting audio. Raises if no input device works.
+
+        Blocks until the stream runs (0.3-0.7 s after an idle spell), so call it off the UI
+        thread. on_first_block is called once, from the audio thread, when the first block of
+        audio has arrived: only from then on is anything recorded.
+        """
         if self._stream is not None:
+            if on_first_block is not None:
+                on_first_block() # already running: audio is flowing
             return
         self._wait_for_close()
         self._chunks = []
+        self._on_first_block = on_first_block
         import sounddevice as sd
 
         try:
@@ -128,6 +141,7 @@ class Recorder:
             return np.zeros(0, dtype=np.float32)
         stream, self._stream = self._stream, None
         self.level = 0.0
+        self._on_first_block = None
         try:
             stream.stop()
         except Exception:

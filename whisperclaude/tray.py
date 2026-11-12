@@ -25,7 +25,8 @@ try: # pystray's own tray-icon callback message (right/left click), not Windows'
 except ImportError: # not on Windows
     NIF_ICON = NIM_MODIFY = WM_NOTIFY = -1
 
-COLORS = {State.LOADING: "#9aa0a6", State.IDLE: "#4caf50", State.RECORDING: "#ff4d4f",
+COLORS = {State.LOADING: "#9aa0a6", State.IDLE: "#4caf50", State.STARTING: "#4caf50",
+          State.RECORDING: "#ff4d4f",
           State.TRANSCRIBING: "#f5a623", State.TRANSLATING: "#f5a623"}
 FPS = 10
 PASTED_FLASH_S = 1.2
@@ -180,6 +181,7 @@ class Tray:
         self._state = State.LOADING
         self.engine = "" # "iGPU" / "CPU", set once the model is loaded
         self._labels = {State.LOADING: "Loading model…", State.IDLE: f"Ready (tap {hotkey_label})",
+                        State.STARTING: "Starting the microphone…",
                         State.RECORDING: "Recording…", State.TRANSCRIBING: "Transcribing…",
                         State.TRANSLATING: "Translating…"}
         self._images = {s: _image(c) for s, c in COLORS.items()}
@@ -316,8 +318,9 @@ class Tray:
     def set_state(self, state: State, msg: str = "") -> None:
         self._state = state
         if self._animator is not None:
-            busy = State.TRANSCRIBING if state is State.TRANSLATING else state # same icon
-            self._animator.set(busy.value)
+            # same icons; STARTING lasts ~0.3 s and may fail back to idle: no flicker
+            same = {State.TRANSLATING: State.TRANSCRIBING, State.STARTING: State.IDLE}
+            self._animator.set(same.get(state, state).value)
         else:
             self.icon.icon = self._images[state]
         self.icon.title = f"WhisperClaude: {self._status()}"

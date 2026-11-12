@@ -635,6 +635,11 @@ class Overlay:
         if state is State.LOADING:
             if msg: # a tap while the model loads: the start pill says what's going on
                 self.set_starting_text(msg)
+        elif state is State.STARTING: # the neutral start pill until audio flows (not red yet)
+            if msg and self._label is not None:
+                self.set_starting_text(msg) # "Cancelling…" on the pill that is showing
+            else:
+                self.show_starting(msg or "Starting…")
         elif state is State.RECORDING:
             self.show_recording()
         elif state is State.TRANSCRIBING:

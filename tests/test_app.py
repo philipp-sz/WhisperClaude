@@ -10,15 +10,33 @@ from whisperclaude.app import QUIT, RESTART, SAMPLE_RATE, TOGGLE, App, State, Wa
 
 
 class FakeRecorder:
-    def __init__(self, seconds=1.0, fail=False):
-        self.seconds, self.fail, self.started = seconds, fail, 0
+    """auto_block: the first audio block arrives as soon as start() returns. Else the test
+    delivers it with deliver(); start_error / open_delay model a failing or slow stream."""
 
-    def start(self):
+    def __init__(self, seconds=1.0, fail=False, auto_block=True):
+        self.seconds, self.fail, self.auto_block = seconds, fail, auto_block
+        self.started = self.stopped = 0
+        self.is_open = False
+        self.first_block = None
+        self.opened = threading.Event() # set once start() has returned (stream is open)
+
+    def start(self, on_first_block=None):
         if self.fail:
             raise OSError("no microphone")
         self.started += 1
+        self.is_open, self.first_block = True, on_first_block
+        self.opened.set()
+        if self.auto_block:
+            self.deliver()
+
+    def deliver(self):
+        """The first audio block arrives (the real recorder calls this from the audio thread)."""
+        if self.first_block is not None:
+            self.first_block()
 
     def stop(self):
+        self.stopped += 1
+        self.is_open = False
         return np.zeros(int(self.seconds * SAMPLE_RATE), np.float32)
 
 
@@ -52,10 +70,17 @@ def finish(app):
     app.handle(kind, payload)
 
 
+def begin(app):
+    """Start tap, then handle the worker's report that audio flows (-> RECORDING)."""
+    app.handle(TOGGLE)
+    assert app.state is State.STARTING
+    finish(app)
+
+
 def test_full_cycle_pastes_text():
     app, states, pasted = make_app()
     app.transcriber.release.set()
-    app.handle(TOGGLE)
+    begin(app)
     assert app.state is State.RECORDING
     app.handle(TOGGLE)
     assert app.state is State.TRANSCRIBING
@@ -67,7 +92,7 @@ def test_full_cycle_pastes_text():
 
 def test_toggle_during_transcribing_is_ignored():
     app, _, pasted = make_app()
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(TOGGLE)
     app.handle(TOGGLE) # ignored
     app.handle(TOGGLE) # ignored
@@ -84,7 +109,7 @@ def test_empty_transcript_is_not_pasted():
     tr = BlockingTranscriber(text="")
     tr.release.set()
     app, states, pasted = make_app(transcriber=tr)
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(TOGGLE)
     finish(app)
     assert pasted == []
@@ -93,7 +118,7 @@ def test_empty_transcript_is_not_pasted():
 
 def test_too_short_recording_skips_transcription():
     app, states, _ = make_app(recorder=FakeRecorder(seconds=0.1))
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(TOGGLE)
     assert app.transcriber.calls == 0
     assert states[-1] == (State.IDLE, "Too short")
@@ -101,9 +126,10 @@ def test_too_short_recording_skips_transcription():
 
 def test_mic_error_returns_to_idle():
     app, states, _ = make_app(recorder=FakeRecorder(fail=True))
-    app.handle(TOGGLE)
+    begin(app)
     assert app.state is State.IDLE
     assert "no microphone" in states[-1][1]
+    assert states[0] == (State.STARTING, "")
 
 
 def test_paste_error_is_reported():
@@ -112,7 +138,7 @@ def test_paste_error_is_reported():
 
     app, states, _ = make_app(paste=broken_paste)
     app.transcriber.release.set()
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(TOGGLE)
     finish(app)
     assert app.state is State.IDLE
@@ -122,8 +148,7 @@ def test_paste_error_is_reported():
 def test_process_pending_stops_on_quit():
     app, _, _ = make_app()
     app.events.put((TOGGLE, None))
-    assert app.process_pending() is True
-    assert app.state is State.RECORDING
+    assert wait_for(lambda: app.process_pending() and app.state is State.RECORDING)
     app.events.put((QUIT, None))
     assert app.process_pending() is False
     assert app.exit_reason == QUIT
@@ -201,7 +226,7 @@ def test_set_transcriber_ends_loading():
     tr.release.set()
     app.set_transcriber(tr)
     assert app.state is State.IDLE and states == [] # caller shows its own "ready" animation
-    app.handle(TOGGLE)
+    begin(app)
     assert app.state is State.RECORDING
 
 
@@ -227,7 +252,7 @@ def test_custom_event_handlers():
 
 def run_cycle(app):
     app.transcriber.release.set()
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(TOGGLE)
     finish(app)
 
@@ -307,7 +332,7 @@ def test_live_transcription_is_fed_while_recording_and_finished_at_the_stop(monk
     live = FakeLive()
     pasted = []
     app = App(SnapshotRecorder(), LiveTranscriber(live), pasted.append)
-    app.handle(TOGGLE)
+    begin(app)
     assert wait_for(lambda: live.feeds >= 2)
     app.handle(TOGGLE)
     finish(app)
@@ -320,7 +345,7 @@ def test_failing_live_feed_still_finishes_at_the_stop(monkeypatch):
     live = FakeLive(fail=True)
     pasted = []
     app = App(SnapshotRecorder(), LiveTranscriber(live), pasted.append)
-    app.handle(TOGGLE)
+    begin(app)
     assert wait_for(lambda: live.feeds >= 1)
     app.handle(TOGGLE)
     finish(app)
@@ -333,10 +358,10 @@ def test_failing_recorder_stop_returns_to_idle():
             raise OSError("device unplugged")
 
     app, states, _ = make_app(recorder=BrokenStop())
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(TOGGLE)
     assert app.state is State.IDLE and "device unplugged" in states[-1][1]
-    app.handle(TOGGLE)
+    begin(app)
     assert app.state is State.RECORDING # not stuck
 
 
@@ -358,7 +383,7 @@ def auto_app(monkeypatch, speech):
     app = App(SnapshotRecorder(), LiveTranscriber(live), pasted.append,
               on_state=lambda s, msg="": states.append((s, msg)), stop_after_silence_s=0.5,
               on_kept=lambda text, msg: kept.append((text, msg))) # the fake mic has 1 s
-    app.handle(TOGGLE)
+    begin(app)
     return app, live, pasted, kept, states
 
 
@@ -396,20 +421,20 @@ def test_cancel_keeps_the_text_in_the_history_without_pasting():
     tr.release.set()
     app = App(FakeRecorder(), tr, pasted.append, remember=saver(saved),
               on_kept=lambda text, msg: kept.append((text, msg)))
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(app_module.CANCEL)
     assert app.state is State.TRANSCRIBING
     finish(app)
     assert pasted == [] and kept == [("halber Satz", "Cancelled")]
     assert saved == [("halber Satz", {"note": "cancelled"})]
-    app.handle(TOGGLE)
+    begin(app)
     assert app.state is State.RECORDING # next recording works
 
 
 def test_cancel_with_nothing_said_just_says_cancelled():
     app, states, pasted = make_app(transcriber=BlockingTranscriber(text=""))
     app.transcriber.release.set()
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(app_module.CANCEL)
     finish(app)
     assert states[-1] == (State.IDLE, "Cancelled") and pasted == []
@@ -421,6 +446,94 @@ def test_cancel_outside_a_recording_is_ignored():
     assert app.state is State.IDLE and states == []
 
 
+# ---------- STARTING: the microphone opens off the Tk thread, recording starts with audio ----------
+
+def starting_app(**kw):
+    """An app whose recorder delivers the first block only when the test says so."""
+    rec = SnapshotRecorder(auto_block=False)
+    states, pasted, kept = [], [], []
+    app = App(rec, kw.pop("transcriber", None) or BlockingTranscriber(), pasted.append,
+              on_state=lambda s, msg="": states.append((s, msg)),
+              on_kept=lambda text, msg: kept.append((text, msg)), **kw)
+    return app, rec, states, pasted
+
+
+def test_recording_starts_only_when_the_first_block_arrives():
+    live = FakeLive()
+    app, rec, states, _ = starting_app(transcriber=LiveTranscriber(live))
+    app.handle(TOGGLE)
+    assert app.state is State.STARTING and states == [(State.STARTING, "")]
+    assert rec.opened.wait(2) and app.events.empty() # stream open, no audio yet
+    assert app.state is State.STARTING and app._live is None # not red, no live transcription
+    rec.deliver()
+    finish(app)
+    assert app.state is State.RECORDING and states[-1] == (State.RECORDING, "")
+    assert app._live is not None
+    app.handle(TOGGLE)
+    finish(app)
+    assert app.state is State.IDLE
+
+
+@pytest.mark.parametrize("kind", [TOGGLE, app_module.CANCEL]) # stop tap, Esc
+@pytest.mark.parametrize("block_arrived", [False, True]) # before or after the first block
+def test_cancel_during_starting_closes_the_stream_and_pastes_nothing(kind, block_arrived):
+    app, rec, states, pasted = starting_app()
+    app.handle(TOGGLE)
+    assert rec.opened.wait(2)
+    if block_arrived:
+        rec.deliver()
+        assert wait_for(lambda: not app.events.empty()) # the report is queued, not yet handled
+    app.handle(kind)
+    assert app.state is State.STARTING and states[-1] == (State.STARTING, "Cancelling…")
+    finish(app)
+    assert app.state is State.IDLE and states[-1] == (State.IDLE, "Cancelled")
+    assert rec.stopped == 1 and not rec.is_open and app.transcriber.calls == 0 and pasted == []
+    rec.auto_block = True
+    begin(app) # the next recording works
+    assert app.state is State.RECORDING
+
+
+def test_start_taps_while_cancelling_do_not_start_a_second_stream():
+    app, rec, states, _ = starting_app()
+    app.handle(TOGGLE)
+    app.handle(app_module.CANCEL)
+    app.handle(TOGGLE) # still STARTING until the worker reports: only cancels again
+    app.handle(app_module.CANCEL)
+    assert states.count((State.STARTING, "Cancelling…")) == 1
+    finish(app)
+    assert rec.started <= 1 and app.state is State.IDLE
+
+
+def test_no_first_block_in_time_fails_and_closes_the_stream(monkeypatch):
+    monkeypatch.setattr(app_module, "MIC_START_TIMEOUT_S", 0.05)
+    app, rec, states, pasted = starting_app()
+    app.handle(TOGGLE)
+    finish(app) # the worker gave up waiting
+    assert app.state is State.IDLE and states[-1] == (State.IDLE, "Error: Microphone did not start")
+    assert rec.stopped == 1 and not rec.is_open and pasted == []
+    rec.deliver() # a late block changes nothing
+    assert app.events.empty() and app.state is State.IDLE
+
+
+def test_translate_key_during_starting_is_ignored():
+    t = FakeTranslation()
+    app, rec, states, _ = starting_app(translation=t)
+    app.handle(TOGGLE)
+    app.handle(app_module.TRANSLATE)
+    assert app.state is State.STARTING and not t.picks and app._job is None
+    rec.deliver()
+    finish(app)
+    assert app.state is State.RECORDING
+
+
+def test_quit_during_starting_cancels_the_start():
+    app, rec, _, _ = starting_app()
+    app.events.put((TOGGLE, None))
+    app.events.put((QUIT, None))
+    assert app.process_pending() is False and app.exit_reason == QUIT
+    assert rec.opened.wait(2) and wait_for(lambda: not app.events.empty()) # worker ended
+
+
 # ---------- history and the pill's "Copy" offer ----------
 
 def test_transcript_is_saved_before_the_paste_and_offered_for_copying():
@@ -429,7 +542,7 @@ def test_transcript_is_saved_before_the_paste_and_offered_for_copying():
     tr.release.set()
     app = App(FakeRecorder(), tr, lambda t: order.append(("paste", t)),
               remember=lambda t, **kw: order.append(("saved", t)), on_pasted=offered.append)
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(TOGGLE)
     finish(app)
     assert order == [("saved", "wichtiger Text"), ("paste", "wichtiger Text")]
@@ -444,7 +557,7 @@ def test_failing_history_does_not_stop_the_paste():
     tr = BlockingTranscriber(text="text")
     tr.release.set()
     app = App(FakeRecorder(), tr, pasted.append, remember=broken)
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(TOGGLE)
     finish(app)
     assert pasted == ["text"]
@@ -554,7 +667,7 @@ def test_translate_key_starts_loading_the_model(dictation):
     t = FakeTranslation()
     app, *_ = make_translate_app(t)
     if dictation:
-        app.handle(TOGGLE)
+        begin(app)
         assert t.prepared == 0
     app.handle(app_module.TRANSLATE)
     assert t.prepared == 1
@@ -588,7 +701,7 @@ def test_translated_selection_is_kept_when_the_focus_moved():
 def test_dictate_and_translate():
     t = FakeTranslation()
     app, states, pasted, kept, saved = make_translate_app(t)
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(app_module.TRANSLATE) # instead of the second Ctrl tap
     assert app.state is State.TRANSCRIBING
     assert t.picks and t.picks[0][1] is True # the picker opens right away
@@ -608,7 +721,7 @@ def test_dictate_and_translate():
 def test_dictation_picker_cancelled(focus_back, pasted_expected, kept_expected, note):
     t = FakeTranslation()
     app, states, pasted, kept, saved = make_translate_app(t)
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(app_module.TRANSLATE)
     t.answer(None, focus_back)
     pump_until(app, lambda: app.state is State.IDLE)
@@ -620,7 +733,7 @@ def test_dictation_picker_cancelled(focus_back, pasted_expected, kept_expected, 
 def test_failed_translation_keeps_the_dictation():
     t = FakeTranslation(fail=True)
     app, states, pasted, kept, saved = make_translate_app(t)
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(app_module.TRANSLATE)
     t.answer("fra_Latn")
     pump_until(app, lambda: app.state is State.IDLE)
@@ -631,7 +744,7 @@ def test_failed_translation_keeps_the_dictation():
 def test_nothing_recognized_closes_the_picker():
     t = FakeTranslation()
     app, states, pasted, *_ = make_translate_app(t, text="")
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(app_module.TRANSLATE)
     pump_until(app, lambda: t.closed == 1)
     t.answer(None) # what close_pick() does in the real picker
@@ -697,7 +810,7 @@ def test_selection_picker_shows_the_guess_and_the_picked_source_is_used():
 def test_dictation_guess_reaches_the_open_picker():
     t = FakeTranslation()
     app, states, pasted, *_ = make_translate_app(t)
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(app_module.TRANSLATE)
     assert t.picks[0][2] == [] # opened before the transcript exists
     pump_until(app, lambda: t.guesses)
@@ -724,7 +837,7 @@ class InstantTranscriber:
 
 def run_dictation(app):
     """Toggle on and off, then handle the worker's events until the paste is done."""
-    app.handle(TOGGLE)
+    begin(app)
     app.handle(TOGGLE)
     events = []
     while app.state is not State.IDLE:

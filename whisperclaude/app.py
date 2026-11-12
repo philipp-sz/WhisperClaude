@@ -1,4 +1,10 @@
-"""State machine: LOADING -> IDLE -> RECORDING -> TRANSCRIBING -> IDLE, driven by queue events.
+"""State machine: LOADING -> IDLE -> STARTING -> RECORDING -> TRANSCRIBING -> IDLE, driven by
+queue events.
+
+STARTING: the start tap opens the microphone on a worker thread (a mic that was idle needs
+0.3-0.7 s to wake up, which would block the Tk thread and cost the first word). The pill turns
+to RECORDING only when the first audio block has arrived. A stop tap or Esc during STARTING
+cancels; a failed open, or no audio within MIC_START_TIMEOUT_S, ends in IDLE with an error.
 
 The translate key adds TRANSLATING: IDLE -> TRANSLATING -> IDLE for selected text, and
 RECORDING -> TRANSCRIBING -> TRANSLATING -> IDLE for a dictation. Both ask for the target
@@ -38,9 +44,11 @@ KEPT = "kept" # worker -> Tk: saved to the history but not pasted; payload: (tex
 GUESS = "guess" # worker -> Tk: detected source languages of a dictation; payload: (job, codes)
 TRANSLATING = "translating" # worker -> Tk: the translation itself has started; payload: pill text or None
 RELOADED = "reloaded" # worker -> Tk: the model was loaded again after a failure; payload: transcriber
+MIC_STARTED = "mic_started" # worker -> Tk: first audio block or failure; payload: (_MicStart, error)
 
 MIN_AUDIO_S = 0.3
 LIVE_FEED_S = 5.0 # while recording, hand the audio so far to the live transcription this often
+MIC_START_TIMEOUT_S = 2.0 # an opened microphone that delivers no audio for this long = failed
 
 
 class WakeQueue(queue.Queue):
@@ -80,13 +88,14 @@ MOVED = "Not pasted (the focus moved)"
 class State(enum.Enum):
     LOADING = "loading" # model still loading: taps get a "still loading" hint
     IDLE = "idle"
+    STARTING = "starting" # microphone opening, no audio yet: not recording (the first word would be lost)
     RECORDING = "recording"
     TRANSCRIBING = "transcribing"
     TRANSLATING = "translating"
 
 
 class RecorderLike(Protocol):
-    def start(self) -> None: ...
+    def start(self, on_first_block: Callable[[], None] | None = None) -> None: ...
     def stop(self) -> np.ndarray: ...
 
 
@@ -139,6 +148,19 @@ class _TranslateJob:
     def done(self, choice: Choice | None, focus_back: bool) -> None:
         self.choice, self.focus_back = choice, focus_back
         self.picked.set()
+
+
+class _MicStart:
+    """One microphone start. wake is set by the recorder's audio callback (first block) or by
+    cancel(), so the worker waiting for audio ends at once either way."""
+
+    def __init__(self) -> None:
+        self.wake = threading.Event()
+        self.cancelled = False # only touched on the Tk thread
+
+    def cancel(self) -> None:
+        self.cancelled = True
+        self.wake.set()
 
 
 class _LiveRun:
@@ -233,6 +255,7 @@ class App:
         self.handlers: dict[str, Callable[[object], None]] = {}
         self._rec_started = 0.0
         self._live: _LiveRun | None = None
+        self._mic: _MicStart | None = None # the microphone start in progress (STARTING)
         self._job: _TranslateJob | None = None # translation waiting for the picker
         self._own_events = self._event_table()
 
@@ -261,6 +284,7 @@ class App:
             GUESS: self._on_guess,
             TRANSLATING: lambda payload: self._set(State.TRANSLATING, str(payload or "")),
             CANCEL: self._on_cancel,
+            MIC_STARTED: self._on_mic_started,
             AUTO_STOP: self._on_auto_stop,
             DONE: lambda payload: self._set(State.IDLE, str(payload or "")),
             PASTED: self._on_pasted_event,
@@ -273,6 +297,8 @@ class App:
             self._start_recording()
         elif self.state is State.RECORDING:
             self._stop_recording()
+        elif self.state is State.STARTING:
+            self._cancel_start() # a stop tap before the first audio: nothing to keep
         elif self.state is State.LOADING:
             log.info("toggle ignored: model still loading")
             self.on_state(State.LOADING, "Still loading, one moment…")
@@ -292,6 +318,8 @@ class App:
         if self.state is State.RECORDING:
             log.info("recording cancelled")
             self._stop_recording(cancelled=True)
+        elif self.state is State.STARTING:
+            self._cancel_start()
 
     def _on_auto_stop(self, _payload: object) -> None:
         if self.state is State.RECORDING: # not if a tap stopped it in the meantime
@@ -325,7 +353,7 @@ class App:
             self._stop_recording(translate=True)
         elif self.state is State.LOADING:
             self.on_state(State.LOADING, "Still loading, one moment…")
-        else:
+        else: # also STARTING: nothing is recorded yet, so there is nothing to translate
             log.info("translate key ignored while busy")
 
     def _show_picker(self, job: _TranslateJob) -> None:
@@ -424,12 +452,50 @@ class App:
         self.events.put((KEPT, (text, msg)))
 
     def _start_recording(self) -> None:
+        """Tk thread: enter STARTING and open the microphone on a worker thread."""
+        attempt = self._mic = _MicStart()
+        self._set(State.STARTING)
+        threading.Thread(target=self._open_mic, args=(attempt,), daemon=True,
+                         name="mic-start").start()
+
+    def _open_mic(self, attempt: _MicStart) -> None:
+        """Worker thread: open the stream, wait for its first audio block, report either way.
+        The recorder's callback only sets attempt.wake (it runs on the audio thread)."""
+        error: Exception | None = None
         try:
-            self.recorder.start()
+            self.recorder.start(attempt.wake.set)
+            if not attempt.wake.wait(MIC_START_TIMEOUT_S):
+                log.warning("no audio from the microphone after %.1f s", MIC_START_TIMEOUT_S)
+                error = TimeoutError("Microphone did not start")
         except Exception as e: # e.g. no microphone
             log.exception("could not start recording")
-            self._set(State.IDLE, f"Error: {e}")
+            error = e
+        self.events.put((MIC_STARTED, (attempt, error)))
+
+    def _on_mic_started(self, payload: object) -> None:
+        attempt, error = payload
+        if attempt is not self._mic:
             return
+        self._mic = None
+        if attempt.cancelled or error is not None:
+            try:
+                self.recorder.stop() # closes a stream that did open; harmless otherwise
+            except Exception:
+                log.exception("could not close the microphone")
+            self._set(State.IDLE, "Cancelled" if attempt.cancelled else f"Error: {error}")
+            return
+        self._begin_recording()
+
+    def _cancel_start(self) -> None:
+        """Stop tap or Esc while STARTING: the worker ends at once, and its report closes the
+        stream (if it opened) and goes to IDLE. Until then the pill says so."""
+        if self._mic is not None and not self._mic.cancelled:
+            log.info("start cancelled")
+            self._mic.cancel()
+            self.on_state(State.STARTING, "Cancelling…")
+
+    def _begin_recording(self) -> None:
+        """Tk thread: audio flows, so the user can speak now."""
         self._rec_started = time.monotonic()
         log.info("recording started")
         make_live = getattr(self.transcriber, "live", None)
@@ -563,5 +629,7 @@ class App:
                 if self.state is State.RECORDING:
                     self._stop_live()
                     self.recorder.stop() # release the mic
+                elif self._mic is not None:
+                    self._mic.cancel() # the worker's stream closes with the process
                 return False
             self.handle(kind, payload)

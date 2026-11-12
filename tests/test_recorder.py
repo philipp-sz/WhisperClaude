@@ -100,3 +100,30 @@ def test_a_close_that_outlasts_the_timeout_is_logged_and_start_goes_on(monkeypat
         r.start()
     assert r.is_recording
     assert any("still closing" in m for m in caplog.messages)
+
+
+BLOCK = np.ones((160, 1), np.float32)
+
+
+def test_first_block_callback_fires_once_when_audio_arrives():
+    r = Recorder()
+    r._open = lambda: FakeStream()
+    calls = []
+    r.start(lambda: calls.append(1))
+    assert calls == [] and r.is_recording # stream open, but no audio yet
+    r._callback(BLOCK, 160, None, None)
+    r._callback(BLOCK, 160, None, None)
+    assert calls == [1] and len(r.stop()) == 320
+
+
+def test_start_on_a_running_stream_reports_at_once_and_stop_drops_the_callback():
+    r = recording(FakeStream())
+    calls = []
+    r.start(lambda: calls.append("running")) # already open: audio flows
+    assert calls == ["running"]
+    r.stop()
+    r._open = lambda: FakeStream()
+    r.start(lambda: calls.append("stale"))
+    r.stop() # closed before any audio: the callback must not fire later
+    r._callback(BLOCK, 160, None, None)
+    assert calls == ["running"]
