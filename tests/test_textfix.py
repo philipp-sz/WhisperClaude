@@ -72,3 +72,15 @@ def test_fix_model_de(text, expected):
 ])
 def test_fix_article_a(text, expected):
     assert fix_article_a(text) == expected
+
+
+@pytest.mark.parametrize("text", [
+    "voy a escribir un correo",      # Spanish preposition
+    "Il a entendu le bruit",         # French verb
+    "Vado a ordinare per la cena",   # Italian preposition
+    "Plan a or plan b",              # a label, not an article
+    "vitamin a and b",
+])
+def test_fix_article_a_leaves_other_languages_and_labels(text):
+    assert fix_article_a(text) == text
+    assert join_chunks([text]) == text

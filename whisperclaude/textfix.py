@@ -50,6 +50,12 @@ _MODEL = re.compile(r"\b(?:Chatmodel|chatmodel|Model)\b")
 _A_BEFORE_VOWEL = re.compile(
     r"\b([Aa])(\s+)([aeioAEIO]\w*|hour\w*|honest\w*|honor\w*|honour\w*|heir\w*)\b")
 _A_EXCEPTIONS = ("one", "once", "eu", "ewe")
+_A_NEVER_ARTICLE = frozenset(("and", "or", "are", "is")) # "vitamin a and b", "plan a or b"
+# Function words of the languages where a standalone "a" is a preposition or a verb ("voy a
+# escribir", "il a entendu", "vado a ordinare"): such sentences are left alone.
+_NOT_EN_WORDS = frozenset(
+    "un una el la los las que por para con del pero es muy le les des est je nous vous il elle pas "
+    "dans avec pour mais che di sono non per gli della voy vado hay".split())
 
 
 def fix_pronoun_i(text: str) -> str:
@@ -78,11 +84,19 @@ def fix_article_a(text: str) -> str:
     """'a' -> 'an' before a vowel sound. Capitalized words are skipped (acronyms, "I")."""
     def fix(match: re.Match[str]) -> str:
         word = match.group(3)
-        if word[0].isupper() or word.lower().startswith(_A_EXCEPTIONS):
+        if (word[0].isupper() or word.lower().startswith(_A_EXCEPTIONS)
+                or word.lower() in _A_NEVER_ARTICLE):
             return match.group(0)
         article = "An" if match.group(1) == "A" else "an"
         return article + match.group(2) + word
-    return _A_BEFORE_VOWEL.sub(fix, text)
+
+    def fix_sentence(sentence: re.Match[str]) -> str:
+        words = re.findall(r"[\w'’]+", sentence.group().lower())
+        other = sum(w in _NOT_EN_WORDS for w in words) + sum(w in _DE_WORDS for w in words)
+        if other > sum(w in _EN_WORDS for w in words):
+            return sentence.group() # not English: "a" may be a preposition or a verb
+        return _A_BEFORE_VOWEL.sub(fix, sentence.group())
+    return _SENTENCE.sub(fix_sentence, text)
 
 
 def join_chunks(texts: Iterable[str]) -> str:
