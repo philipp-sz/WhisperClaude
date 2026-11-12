@@ -2,6 +2,7 @@
 import sys
 import time
 import tkinter as tk
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -66,16 +67,18 @@ class FakePlayer:
         self.stopped += 1
 
 
-def make_app(tmp_path, player):
+def make_app(tmp_path, player, seconds=1.0):
+    """Window with two recordings of `seconds` each; their ids (the timestamps) differ."""
     try:
         root = tk.Tk()
     except tk.TclError:
         pytest.skip("no display")
     root.withdraw()
-    for text in ("eins", "zwei"):
-        rec = rd.save_recording(np.zeros(16_000, np.float32), tmp_path)
+    start = datetime(2026, 1, 1, 12, 0, 0)
+    for i, text in enumerate(("eins", "zwei")):
+        rec = rd.save_recording(np.zeros(int(16_000 * seconds), np.float32), tmp_path,
+                                when=start + timedelta(seconds=i))
         rd.save_reference(rec, text)
-        time.sleep(1.05) # the id is the time in seconds
     app = gui.App(root, FakeSession(tmp_path), player)
     return root, app
 
@@ -113,12 +116,12 @@ def test_selecting_another_recording_stops_the_playback(tmp_path):
 
 def test_the_button_resets_itself_when_the_audio_has_ended(tmp_path):
     player = FakePlayer()
-    root, app = make_app(tmp_path, player)
+    root, app = make_app(tmp_path, player, seconds=0.2)
     try:
         app.listbox.selection_set(0)
         app.select(app.listbox.curselection())
         app.toggle_playback()
-        pump(root, seconds=2.0, until=lambda: app.play.cget("text") == "Play") # 1 s of audio + 0.3 s
+        pump(root, seconds=2.0, until=lambda: app.play.cget("text") == "Play") # 0.2 s of audio + 0.3 s
         assert app.play.cget("text") == "Play" and player.stopped == 0
     finally:
         root.destroy()

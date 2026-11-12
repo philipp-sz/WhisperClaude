@@ -9,6 +9,7 @@ language stay as they are.
 """
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from collections.abc import Callable
@@ -111,6 +112,18 @@ def user_languages() -> list[str]:
     return [c for i, c in enumerate(codes) if c in SOURCE_CODES and c not in codes[:i]]
 
 
+@functools.lru_cache(maxsize=1)
+def _identifier():
+    """The py3langid model restricted to SOURCE_CODES, loaded once (~0.5 s) and shared.
+    set_languages() mutates the identifier, but only here and always with the same list, so
+    sharing is safe. Per-instance state (`preferred`) stays on LanguageDetector."""
+    from py3langid.langid import MODEL_FILE, LanguageIdentifier
+
+    identifier = LanguageIdentifier.from_model_file(MODEL_FILE, norm_probs=True)
+    identifier.set_languages([c for c in identifier.nb_classes if c in SOURCE_CODES])
+    return identifier
+
+
 class LanguageDetector:
     """py3langid restricted to languages NLLB has (else it may answer e.g. Latin).
 
@@ -123,10 +136,7 @@ class LanguageDetector:
     PREFERRED_WEIGHT = 10.0
 
     def __init__(self, preferred: list[str] | None = None) -> None:
-        from py3langid.langid import MODEL_FILE, LanguageIdentifier
-
-        self._id = LanguageIdentifier.from_model_file(MODEL_FILE, norm_probs=True)
-        self._id.set_languages([c for c in self._id.nb_classes if c in SOURCE_CODES])
+        self._id = _identifier()
         self.preferred = user_languages() if preferred is None else preferred
 
     def detect(self, text: str) -> tuple[str, float]:

@@ -92,10 +92,12 @@ def write_wav(path: Path, audio: np.ndarray) -> None:
         w.writeframes(pcm.tobytes())
 
 
-def save_recording(audio: np.ndarray, directory: Path = REAL_DIR) -> Recording:
-    """Writes a new recording (named by the time) with an empty reference."""
+def save_recording(audio: np.ndarray, directory: Path = REAL_DIR, *,
+                   when: datetime | None = None) -> Recording:
+    """Writes a new recording (named by the time, to the second: `when`, default now) with an
+    empty reference. Two recordings in the same second need different `when` values."""
     directory.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = (when or datetime.now()).strftime("%Y%m%d_%H%M%S")
     rec = Recording(stamp, directory / f"{stamp}.wav")
     write_wav(rec.wav, audio)
     save_reference(rec)
