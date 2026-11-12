@@ -48,3 +48,23 @@ Configured languages fix the short phrases in that language. Leaving out English
 ## Committed memory and MKL (2026-11-11)
 
 On Intel CPUs CTranslate2 uses Intel's MKL for its matrix products. With int8 weights MKL commits memory that it never touches: NLLB-1.3B shows 5.3 GB of private memory but uses 1.4 GB (working set), NLLB-600M 2.3 against 0.7 GB, Whisper `small` on the CPU 2.7 against 0.6 GB. Committed memory is neither RAM nor disk, but it counts against the commit limit (RAM + page file), so on a small machine other programs could fail to get memory. `CT2_USE_MKL=0` switches CTranslate2 to oneDNN: commit equals use (NLLB-1.3B 1.4 GB), the translations were identical (8 of 8 sentences), but translating took 2.2 times as long (0.98 s against 0.44 s per sentence) and Whisper `small` 1.2 times (6.2 s against 5.1 s for 58 s of audio). The app therefore turns MKL off only below 12 GiB of RAM (`lean_cpu_math` in `__main__`, the same threshold that picks NLLB-600M); an explicit `CT2_USE_MKL` in the environment wins.
+
+## Unloading the model when idle (2026-11-11)
+
+The translate key is used rarely, but NLLB-1.3B holds 1.55 GB of working set and 5.6 GB of committed memory (MKL) all the time. `[translation] unload_after_min` (default 10, 0 = keep it loaded) unloads the CTranslate2 model after that many minutes without a translation (`LazyModel` in `translator.py`: `unload_model()`, later `load_model()` on the same object). The tokenizer and the language detector stay (the picker needs the detector). On the CPU the model is not loaded at startup either. On CUDA it is loaded at startup (and warmed up), and the idle unload applies after that.
+
+Loading starts when the translate key is tapped (`Translation.prepare()`, on a background thread), so it overlaps the picker or the transcription. `translate()` waits if the load is still running. One lock covers load, unload and translation: an unload never happens during a translation, and a second tap while a load runs does not start another one. The idle time restarts at each tap and each finished translation. A failed load is logged and raised by the next `translate()`, which tries again. The warm-up translation is dropped on the CPU: the first real translation was as fast without it.
+
+Measured on the laptop CPU (NLLB-1.3B, int8, MKL as the app runs it here, 4 threads, ctranslate2 4.8.2, file cache warm, cold process each time, median of 3; another experiment may have used the GPU, so the CPU timings are noisy). Text: 3 German sentences into English.
+
+| State | Time | Working set | Private (commit) |
+|---|---|---|---|
+| Startup, model loaded (`unload_after_min = 0`, 3 threads) | 4.9 s | 1.55 GB | 5.5 GB |
+| Startup, model not loaded (default) | 2.7 s | 0.22 GB | 0.43 GB |
+| First translation with the model loaded at start | 1.3 s | 1.55 GB | 5.6 GB |
+| First translation, model loaded on demand (load + translation, no picker time) | 4.4 s | 1.55 GB | 5.6 GB |
+| Later translation | 1.3 s | 1.55 GB | 5.6 GB |
+| Unload | 0.21 s | 0.22 GB | 0.51 GB |
+| Reload on the key tap + translation | 4.5 s | 1.55 GB | 5.6 GB |
+
+The load takes about 3.2 s. Picking a language takes 1-2 s, so after an idle unload the user waits about 1.5-2.5 s longer for the first translation than before, and nothing longer afterwards. In return the app idles 1.3 GB (working set) and 5.1 GB (commit) lighter. The new startup is also 2 s faster than the old sequential one (4.7-5.4 s), because the tokenizer and the detector no longer wait for the model.

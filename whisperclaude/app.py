@@ -36,7 +36,7 @@ PICK = "pick" # worker -> Tk: show the language picker; payload: _TranslateJob
 UNPICK = "unpick" # worker -> Tk: close the picker, nothing to translate; payload: _TranslateJob
 KEPT = "kept" # worker -> Tk: saved to the history but not pasted; payload: (text, message)
 GUESS = "guess" # worker -> Tk: detected source languages of a dictation; payload: (job, codes)
-TRANSLATING = "translating" # worker -> Tk: the translation itself has started
+TRANSLATING = "translating" # worker -> Tk: the translation itself has started; payload: pill text or None
 RELOADED = "reloaded" # worker -> Tk: the model was loaded again after a failure; payload: transcriber
 
 MIN_AUDIO_S = 0.3
@@ -107,6 +107,8 @@ Choice = tuple[str, str | None] # (target, source); source None = auto-detect
 class TranslationLike(Protocol):
     """The translate feature: selection capture, language picker and translation model."""
     def capture_selection(self) -> str | None: ... # worker thread; None = nothing selected
+    def prepare(self) -> None: ... # any thread, never blocks: start loading the model early
+    def model_ready(self) -> bool: ... # worker thread: False while the model loads (or is unloaded)
     def guess(self, text: str) -> list[str]: ... # worker thread: detected source languages
     def pick(self, on_done: Callable[[Choice | None, bool], None], dictation: bool = False,
              guess: list[str] = ...) -> None: ... # Tk thread
@@ -257,7 +259,7 @@ class App:
             PICK: self._show_picker,
             UNPICK: self._on_unpick,
             GUESS: self._on_guess,
-            TRANSLATING: lambda _payload: self._set(State.TRANSLATING),
+            TRANSLATING: lambda payload: self._set(State.TRANSLATING, str(payload or "")),
             CANCEL: self._on_cancel,
             AUTO_STOP: self._on_auto_stop,
             DONE: lambda payload: self._set(State.IDLE, str(payload or "")),
@@ -313,11 +315,13 @@ class App:
         if job is not None and job.shown and not job.picked.is_set():
             self.translation.confirm_pick() # tapped again in the picker: take the top language
         elif self.state is State.IDLE:
+            self.translation.prepare() # the model load overlaps the picker
             self._job = _TranslateJob()
             self.state = State.TRANSLATING # the pill stays hidden until a language is picked
             threading.Thread(target=self._translate_selection, args=(self._job,),
                              daemon=True).start()
         elif self.state is State.RECORDING:
+            self.translation.prepare() # the model load overlaps the transcription
             self._stop_recording(translate=True)
         elif self.state is State.LOADING:
             self.on_state(State.LOADING, "Still loading, one moment…")
@@ -366,7 +370,9 @@ class App:
         """Worker thread. keep: the focus moved, so the translation is kept, not pasted.
         A failed translation of a dictation keeps the original (it is in the history)."""
         target, source = choice
-        self.events.put((TRANSLATING, None))
+        # the model may have been unloaded while the user picked: say so, the load takes seconds
+        loading = not self.translation.model_ready()
+        self.events.put((TRANSLATING, "Loading translation model…" if loading else None))
         try:
             t0 = time.perf_counter()
             translated = self.translation.translate(text, target, source)

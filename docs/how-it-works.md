@@ -42,7 +42,7 @@ While recording, finished chunks are already transcribed. After the stop tap onl
 
 ## Translation
 
-The translation model is NLLB-200, run through CTranslate2 (int8) on an NVIDIA GPU or the CPU. CTranslate2 has no Intel GPU backend. The text is split into sentences, and line breaks and list markers are kept. The source language is detected per sentence with py3langid, with the user's own languages weighted for short texts, or picked in the language picker. Details and the model comparison are in [translation.md](translation.md).
+The translation model is NLLB-200, run through CTranslate2 (int8) on an NVIDIA GPU or the CPU. CTranslate2 has no Intel GPU backend. The text is split into sentences, and line breaks and list markers are kept. The source language is detected per sentence with py3langid, with the user's own languages weighted for short texts, or picked in the language picker. The model is unloaded after 10 idle minutes (`unload_after_min`) and loaded again when the translate key is tapped, so the load overlaps the language picker. On the CPU it is not loaded at startup. See [translation.md](translation.md#unloading-the-model-when-idle-2026-11-11). Details and the model comparison are in [translation.md](translation.md).
 
 ## Keys
 

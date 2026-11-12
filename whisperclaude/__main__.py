@@ -162,9 +162,11 @@ def _load_translator(t: TranslationConfig, translation: Translation) -> None:
         from whisperclaude.translator import Translator
 
         t0 = time.perf_counter()
-        translator = Translator(t.model, t.device, t.cpu_threads, languages=t.my_languages)
-        log.info("translation model %s loaded on %s in %.1f s; own languages %s (%s)",
+        translator = Translator(t.model, t.device, t.cpu_threads, languages=t.my_languages,
+                                unload_after_s=t.unload_after_min * 60)
+        log.info("translation %s on %s ready in %.1f s (%s); own languages %s (%s)",
                  translator.model_name, translator.device, time.perf_counter() - t0,
+                 "model loads on demand" if translator.on_demand else "model loaded",
                  ", ".join(translator.detector.preferred),
                  "config" if t.my_languages else "Windows")
         translation.set_translator(translator)

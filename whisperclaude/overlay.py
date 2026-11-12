@@ -640,7 +640,7 @@ class Overlay:
         elif state is State.TRANSCRIBING:
             self.show_transcribing()
         elif state is State.TRANSLATING:
-            self.show_transcribing("Translating…", "translating")
+            self.show_transcribing(msg or "Translating…", "translating")
         elif msg: # longer messages stay longer (~13 characters per second, at least 2.5 s)
             self.show_message(msg, max(MESSAGE_S, len(msg) * 0.075))
         else:

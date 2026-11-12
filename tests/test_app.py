@@ -458,7 +458,14 @@ class FakeTranslation:
     def __init__(self, selection="Hallo Welt", fail=False):
         self.selection, self.fail = selection, fail
         self.picks, self.confirmed, self.closed, self.translated = [], 0, 0, []
-        self.guesses, self.sources = [], []
+        self.guesses, self.sources, self.prepared = [], [], 0
+        self.ready, self.on_translate = True, None # model loaded?; hook run at translate()
+
+    def prepare(self):
+        self.prepared += 1
+
+    def model_ready(self):
+        return self.ready
 
     def capture_selection(self):
         return self.selection
@@ -483,6 +490,8 @@ class FakeTranslation:
         self.closed += 1
 
     def translate(self, text, target, source=None):
+        if self.on_translate:
+            self.on_translate()
         if self.fail:
             raise RuntimeError("model broken")
         self.translated.append((text, target))
@@ -537,6 +546,21 @@ def test_translate_without_selection_says_so():
     pump_until(app, lambda: app.state is State.IDLE)
     assert not t.picks and not pasted
     assert "Select text" in states[-1][1]
+
+
+@pytest.mark.parametrize("dictation", [False, True])
+def test_translate_key_starts_loading_the_model(dictation):
+    """Once per tap, so the load overlaps the picker (selection) or the transcription."""
+    t = FakeTranslation()
+    app, *_ = make_translate_app(t)
+    if dictation:
+        app.handle(TOGGLE)
+        assert t.prepared == 0
+    app.handle(app_module.TRANSLATE)
+    assert t.prepared == 1
+    pump_until(app, lambda: t.picks)
+    app.handle(app_module.TRANSLATE) # tapped again in the picker: no second load
+    assert t.prepared == 1 and t.confirmed == 1
 
 
 def test_translate_selection_cancelled_leaves_it_alone():
@@ -613,6 +637,39 @@ def test_nothing_recognized_closes_the_picker():
     t.answer(None) # what close_pick() does in the real picker
     pump_until(app, lambda: app.state is State.IDLE)
     assert not pasted and states[-1] == (State.IDLE, "Nothing recognized")
+
+
+def record_events(app):
+    """Log every worker event put on the queue, in order (the worker is the only writer)."""
+    seen = []
+    put = app.events.put
+
+    def spy(item, *args, **kwargs):
+        seen.append(item)
+        put(item, *args, **kwargs)
+
+    app.events.put = spy
+    return seen
+
+
+@pytest.mark.parametrize("ready, expected", [(True, None), (False, "Loading translation model…")])
+def test_translating_pill_says_when_the_model_is_loading(ready, expected):
+    t = FakeTranslation()
+    t.ready = ready
+    app, states, pasted, kept, saved = make_translate_app(t)
+    seen = record_events(app)
+    t.on_translate = lambda: seen.append("translate")
+    app.handle(app_module.TRANSLATE)
+    pump_until(app, lambda: t.picks)
+    t.answer("deu_Latn")
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert pasted == ["[deu_Latn] Hallo Welt"]
+    assert (State.TRANSLATING, expected or "") in states
+    if expected is None:
+        assert not any(isinstance(e, tuple) and e[0] == app_module.TRANSLATING and e[1]
+                       for e in seen)
+    else: # the message is queued before the translation call
+        assert seen.index((app_module.TRANSLATING, expected)) < seen.index("translate")
 
 
 def test_translate_key_without_feature_or_while_loading():

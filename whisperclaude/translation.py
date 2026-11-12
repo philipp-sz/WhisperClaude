@@ -86,6 +86,21 @@ class Translation:
     def capture_selection(self) -> str | None:
         return capture_selection()
 
+    def prepare(self) -> None:
+        """Any thread, never blocks: the translate key was tapped, so start loading the model
+        in the background (it may have been unloaded while idle)."""
+        translator = self._translator
+        if translator is not None:
+            translator.prepare()
+
+    def model_ready(self) -> bool:
+        """Worker thread: False while the model is still loading or unloaded (translate() would
+        wait for it). True once loaded, and also if loading failed: translate() then raises at once."""
+        if not self._loaded.is_set():
+            return False
+        translator = self._translator
+        return translator is None or translator.loaded
+
     def guess(self, text: str) -> list[str]:
         """Worker thread: the languages auto-detection would use; [] while loading."""
         translator = self._translator

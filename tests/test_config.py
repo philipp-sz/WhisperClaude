@@ -142,3 +142,15 @@ def test_my_languages(tmp_path):
         path.write_text(f"[translation]\nmy_languages = {bad}\n", encoding="utf-8")
         with pytest.raises(ConfigError, match="my_languages"):
             load_config(path)
+
+
+@pytest.mark.parametrize("value, ok", [(0, True), (1, True), (10, True), (1440, True),
+                                       (-1, False), (1441, False), ("10", False), (2.5, False)])
+def test_unload_after_min(tmp_path, value, ok):
+    assert load_config(tmp_path / "none.toml").translation.unload_after_min == 10
+    path = write(tmp_path, f"[translation]\nunload_after_min = {value!r}\n".replace("'", '"'))
+    if ok:
+        assert load_config(path).translation.unload_after_min == value
+    else:
+        with pytest.raises(ConfigError, match="unload_after_min"):
+            load_config(path)

@@ -138,6 +138,7 @@ class TranslationConfig:
     model: str = "auto" # nllb-1.3b, or nllb-600m on little memory (translator.auto_model)
     device: str = "auto" # "auto" = NVIDIA GPU if available, else CPU | "cuda" | "cpu"
     cpu_threads: int = 4
+    unload_after_min: int = 10 # free the model's memory after this idle time; 0 = keep it loaded
     my_languages: tuple[str, ...] = () # languages the user writes in; () = ask Windows
 
     def __post_init__(self) -> None:
@@ -153,6 +154,8 @@ class TranslationConfig:
         _check(self.device in TRANSLATION_DEVICES,
                f"[translation] device must be one of {sorted(TRANSLATION_DEVICES)}")
         _check(1 <= self.cpu_threads <= 32, "[translation] cpu_threads must be 1–32")
+        _check(0 <= self.unload_after_min <= 1440,
+               "[translation] unload_after_min must be 0 (never unload) to 1440")
 
 
 @dataclass(frozen=True)

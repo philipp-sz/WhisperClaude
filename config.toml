@@ -72,6 +72,11 @@ model = "auto"        # NLLB-200: "nllb-600m" (0.6 GB, faster) or "nllb-1.3b" (1
                       # less than 2 GB of free VRAM (NVIDIA GPU)
 device = "auto"       # "auto" = NVIDIA GPU if available, else CPU | "cuda" | "cpu"
 cpu_threads = 4
+# The translation model needs 1.4-5 GB of memory (nllb-1.3b on the CPU) but the key is used
+# rarely. After this many minutes without a translation the model is unloaded (about 0.3 s,
+# frees the memory); the next tap of the key loads it again (3-4 s, while you pick the
+# language). On the CPU it is not loaded at startup either. 0 = keep it loaded all the time.
+unload_after_min = 10
 # The languages you write in, most used first (ISO codes: "de", "en", "es", "fr", "pl", ...).
 # They help to recognize the language of short texts ("Danke", "Bis morgen"). Include English
 # if you write it too. [] = take them from Windows (display language, keyboard layouts, English).

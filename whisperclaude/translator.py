@@ -12,8 +12,13 @@ from __future__ import annotations
 import functools
 import logging
 import re
-from collections.abc import Callable
+import threading
+import time
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Protocol
 
 from whisperclaude.languages import NLLB_CODES, SOURCE_CODES
 
@@ -196,43 +201,202 @@ def auto_model(device: str, free_vram_mb: int | None, ram_gb: float | None) -> s
     return "nllb-600m" if small else "nllb-1.3b"
 
 
+class Model(Protocol):
+    """What LazyModel needs of a ctranslate2.Translator (tests use fakes)."""
+    def load_model(self) -> None: ...
+    def unload_model(self) -> None: ...
+    def translate_batch(self, source: list[list[str]], **kwargs: Any) -> list: ...
+
+
+class LazyModel:
+    """The CTranslate2 model, loaded on demand and unloaded after `unload_after_s` of idle time
+    (0 = once loaded, kept). The object stays: unload_model() frees the memory in 0.2-0.3 s,
+    load_model() brings it back in 3-4 s (NLLB-1.3B on the CPU: 1.4 GB working set, 5.2 GB
+    committed with MKL). One lock covers loading, unloading and translating, so an unload never
+    happens during a load or a translation, and a load never runs twice. `factory` builds the
+    model object; the clock is injectable for tests."""
+
+    def __init__(self, factory: Callable[[], Model], unload_after_s: float = 0.0,
+                 clock: Callable[[], float] = time.monotonic, watch: bool = True) -> None:
+        self._factory, self.unload_after_s, self._clock = factory, unload_after_s, clock
+        self._watch = watch and unload_after_s > 0
+        self._lock = threading.Lock() # held while loading, unloading and translating
+        self._flag = threading.Lock() # only for _loading
+        self._stop = threading.Event()
+        self._model: Model | None = None
+        self._loaded = False
+        self._loading = False # a background load was started and has not finished
+        self._watcher: threading.Thread | None = None # guarded by _lock
+        self._last_used = clock()
+
+    @property
+    def loaded(self) -> bool:
+        return self._loaded
+
+    def start_load(self) -> bool:
+        """Any thread, never blocks: load in the background unless loaded or loading already
+        (True = a load was started). Also counts as use: no unload while the user picks."""
+        self._last_used = self._clock()
+        with self._flag:
+            if self._loaded or self._loading:
+                return False
+            self._loading = True
+        threading.Thread(target=self._background_load, daemon=True,
+                         name="translation-load").start()
+        return True
+
+    def load(self) -> None:
+        """Load now (blocks; no-op if loaded)."""
+        with self._lock:
+            self._load_locked()
+
+    def _background_load(self) -> None:
+        try:
+            self.load()
+        except Exception:
+            log.exception("could not load the translation model") # translate() raises it
+        finally:
+            with self._flag:
+                self._loading = False
+
+    @contextmanager
+    def use(self) -> Iterator[Model]:
+        """The model, loaded (waits for a running load, or loads), locked against unloading."""
+        with self._lock:
+            self._load_locked()
+            try:
+                yield self._model
+            finally:
+                self._last_used = self._clock()
+
+    def _load_locked(self) -> None:
+        if self._loaded:
+            return
+        t0 = time.perf_counter()
+        if self._model is None:
+            self._model = self._factory()
+        else:
+            self._model.load_model()
+        self._loaded = True
+        self._last_used = self._clock()
+        log.info("translation model loaded in %.1f s", time.perf_counter() - t0)
+        if self._watch and self._watcher is None:
+            self._watcher = threading.Thread(target=self._watch_idle, daemon=True,
+                                             name="translation-idle")
+            self._watcher.start()
+
+    def _idle_s(self) -> float:
+        return self._clock() - self._last_used
+
+    def _unload_locked(self) -> None:
+        idle, t0 = self._idle_s(), time.perf_counter()
+        assert self._model is not None # loaded implies built
+        self._model.unload_model()
+        self._loaded = False
+        log.info("translation model unloaded after %.0f min idle in %.1f s", idle / 60,
+                 time.perf_counter() - t0)
+
+    def unload_if_idle(self) -> bool:
+        """Unload if loaded and idle for unload_after_s; waits for a translation or load that
+        is running (which then counts as use). True = unloaded."""
+        with self._lock:
+            if not self._loaded or self._idle_s() < self.unload_after_s or self.unload_after_s <= 0:
+                return False
+            self._unload_locked()
+            return True
+
+    def _watch_idle(self) -> None:
+        """Thread that exists while the model is loaded: sleeps until the idle time could be
+        over, unloads, and ends."""
+        delay = self.unload_after_s
+        while not self._stop.wait(delay):
+            with self._lock:
+                remaining = self.unload_after_s - self._idle_s()
+                if not self._loaded or remaining <= 0:
+                    self._watcher = None # first: a failing unload must not leave a dead watcher
+                    if self._loaded: # (the next load then starts a new one)
+                        try:
+                            self._unload_locked()
+                        except Exception:
+                            log.exception("could not unload the translation model")
+                    return
+            delay = max(remaining, 0.5)
+
+    def close(self) -> None:
+        """Stop the idle watcher (tests)."""
+        self._stop.set()
+
+
+def _run_parallel(*tasks: Callable[[], object]) -> list:
+    """Run the tasks on threads, results in order; the first error is raised."""
+    with ThreadPoolExecutor(len(tasks)) as pool:
+        futures = [pool.submit(task) for task in tasks]
+        return [f.result() for f in futures]
+
+
 class Translator:
-    """NLLB-200 on CTranslate2. translate() is not thread-safe (one worker thread uses it)."""
+    """NLLB-200 on CTranslate2. The CTranslate2 model is a LazyModel: with `unload_after_s` > 0 it
+    is unloaded after that idle time and loaded again on demand (prepare() starts it early);
+    on the CPU it is not even loaded at startup. translate() is serialized by its lock."""
 
     def __init__(self, model: str = "auto", device: str = "auto", cpu_threads: int = 4,
                  beam_size: int = 2, on_status: Callable[[str], None] = lambda s: None,
-                 languages: tuple[str, ...] = ()) -> None:
+                 languages: tuple[str, ...] = (), unload_after_s: float = 0.0) -> None:
         """model "auto": by memory, see auto_model. languages: the user's own languages (ISO
-        codes, most used first); () = Windows'."""
-        import ctranslate2
-        from huggingface_hub import snapshot_download
+        codes, most used first); () = Windows'. unload_after_s: see LazyModel, 0 = keep loaded."""
         from tokenizers import Tokenizer
 
-        self.device = "cpu"
-        if device in ("auto", "cuda"):
-            from whisperclaude.transcriber import cuda_available
-            if cuda_available():
-                self.device = "cuda"
-            elif device == "cuda":
-                log.warning("no usable NVIDIA GPU for the translation, using the CPU")
+        self.device = self._pick_device(device)
         if model == "auto":
             from whisperclaude.transcriber import free_vram_mb
             model = auto_model(self.device, free_vram_mb() if self.device == "cuda" else None,
                                total_ram_gb())
         self.model_name = model
-        repo = MODELS.get(self.model_name, self.model_name)
+        path = self._model_path(MODELS.get(model, model), on_status)
+        self.beam_size = beam_size
+        self.on_demand = self.device == "cpu" and unload_after_s > 0 # not loaded at startup
+        self._lazy = LazyModel(lambda: self._build_model(path, cpu_threads), unload_after_s)
+        tasks = [lambda: Tokenizer.from_file(str(Path(path) / "tokenizer.json")),
+                 lambda: LanguageDetector(list(languages) or None)]
+        if not self.on_demand: # the three pieces load side by side (3.2 s instead of 5)
+            tasks.append(self._lazy.load)
+        self.tokenizer, self.detector, *_ = _run_parallel(*tasks)
+        if self.device == "cuda":
+            self.translate("Hallo.", "eng_Latn") # first call sets up the device: pay it here
+
+    def _pick_device(self, device: str) -> str:
+        if device in ("auto", "cuda"):
+            from whisperclaude.transcriber import cuda_available
+            if cuda_available():
+                return "cuda"
+            if device == "cuda":
+                log.warning("no usable NVIDIA GPU for the translation, using the CPU")
+        return "cpu"
+
+    @staticmethod
+    def _model_path(repo: str, on_status: Callable[[str], None]) -> str:
+        from huggingface_hub import snapshot_download
         try: # cached: no network request at startup
-            path = snapshot_download(repo, local_files_only=True)
+            return snapshot_download(repo, local_files_only=True)
         except Exception:
             on_status("Downloading translation model (one-time)…")
-            path = snapshot_download(repo)
+            return snapshot_download(repo)
+
+    def _build_model(self, path: str, cpu_threads: int) -> Model:
+        import ctranslate2
         compute = "int8_float16" if self.device == "cuda" else "int8"
-        self.model = ctranslate2.Translator(path, device=self.device, compute_type=compute,
-                                            intra_threads=cpu_threads)
-        self.tokenizer = Tokenizer.from_file(str(Path(path) / "tokenizer.json"))
-        self.beam_size = beam_size
-        self.detector = LanguageDetector(list(languages) or None)
-        self.translate("Hallo.", "eng_Latn") # first call sets up the device: pay it here
+        return ctranslate2.Translator(path, device=self.device, compute_type=compute,
+                                      intra_threads=cpu_threads)
+
+    @property
+    def loaded(self) -> bool:
+        """True if the CTranslate2 model is in memory (False while loading or after an unload)."""
+        return self._lazy.loaded
+
+    def prepare(self) -> None:
+        """Any thread, never blocks: start loading the model if it is not loaded (the translate
+        key was tapped, the load overlaps the language picker)."""
+        self._lazy.start_load()
 
     def _tokens(self, sentence: str, source: str) -> list[str]:
         ids = self.tokenizer.encode(sentence, add_special_tokens=False).ids
@@ -275,9 +439,10 @@ class Translator:
         out = list(sentences)
         if todo:
             batch = [self._tokens(sentences[i], sources[i]) for i in todo]
-            results = self.model.translate_batch(
-                batch, target_prefix=[[target]] * len(batch), beam_size=self.beam_size,
-                max_decoding_length=min(512, 2 * max(map(len, batch)) + 10))
+            with self._lazy.use() as model: # waits for a running load, blocks an unload
+                results = model.translate_batch(
+                    batch, target_prefix=[[target]] * len(batch), beam_size=self.beam_size,
+                    max_decoding_length=min(512, 2 * max(map(len, batch)) + 10))
             for i, r in zip(todo, results):
                 out[i] = tidy(sentences[i], self._decode(r.hypotheses[0]), target)
         it = iter(out)
