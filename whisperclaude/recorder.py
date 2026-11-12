@@ -4,18 +4,27 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
+from types import ModuleType
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from whisperclaude.constants import SAMPLE_RATE
 
-if TYPE_CHECKING: # sounddevice initialises PortAudio on import (~120 ms): load it only when audio is used
+if TYPE_CHECKING:
     import sounddevice as sd
 
 log = logging.getLogger(__name__)
 
 CLOSE_TIMEOUT_S = 5.0 # how long start() / refresh_devices() wait for a pending background close
+
+
+def load_sounddevice() -> ModuleType:
+    """The sounddevice module. The only import of it: it initialises PortAudio on import
+    (~100 ms), so it is deferred out of the UI path; the model-loader thread calls this once
+    at startup (see __main__.start_model_loading), later calls are free."""
+    import sounddevice
+    return sounddevice
 
 
 class Recorder:
@@ -52,8 +61,7 @@ class Recorder:
             first() # runs on the audio thread: the app only sets an Event here
 
     def _open(self) -> sd.InputStream:
-        import sounddevice as sd
-
+        sd = load_sounddevice()
         stream = sd.InputStream(
             samplerate=self.samplerate,
             channels=1,
@@ -89,8 +97,7 @@ class Recorder:
             return
         self._wait_for_close()
         try:
-            import sounddevice as sd
-
+            sd = load_sounddevice()
             sd._terminate()
             sd._initialize()
             log.info("audio devices refreshed")
@@ -111,8 +118,7 @@ class Recorder:
         self._wait_for_close()
         self._chunks = []
         self._on_first_block = on_first_block
-        import sounddevice as sd
-
+        sd = load_sounddevice()
         try:
             self._stream = self._open()
         except sd.PortAudioError as e:

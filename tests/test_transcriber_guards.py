@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from whisperclaude import transcriber as tr
+from whisperclaude import system, transcriber as tr
 
 SPEECH = ("Der Bericht ist fertig, aber die Zahlen im zweiten Abschnitt muss ich noch einmal prüfen. Danach schicke "
           "ich ihn an das ganze Team, damit alle bis Freitag Rückmeldung geben können, falls etwas fehlt.")
@@ -105,7 +105,7 @@ def test_quiet_speech_is_found(monkeypatch):
 def test_gpu_present(monkeypatch, returncode, found):
     """Test that the probe's exit code says whether the GPU is there."""
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=returncode))
-    assert tr.gpu_present("igpu") is found
+    assert system.gpu_present("igpu") is found
 
 
 def test_gpu_present_survives_a_hanging_probe(monkeypatch):
@@ -113,4 +113,4 @@ def test_gpu_present_survives_a_hanging_probe(monkeypatch):
     def hang(*a, **kw):
         raise subprocess.TimeoutExpired("python", 60)
     monkeypatch.setattr(subprocess, "run", hang)
-    assert tr.gpu_present("cuda") is False
+    assert system.gpu_present("cuda") is False
