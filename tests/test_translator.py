@@ -204,3 +204,46 @@ def test_segment_matches_the_old_regex_on_random_lines():
     for _ in range(4000):
         text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 25)))
         assert segment(text) == _old_segment(text), repr(text)
+
+
+def test_pick_short_penalises_added_words():
+    from whisperclaude.translator import pick_short
+
+    # "Ja": the model's first choice adds words; a bare "Yes" is almost as likely
+    assert pick_short("Ja", ["Yes, I did.", "Yes"], [-0.30, -0.35]) == 1
+    # a clearly better first choice is kept even if longer
+    assert pick_short("Ja", ["Yes, I did.", "Yes"], [-0.30, -0.80]) == 0
+    # words the source has too are free
+    assert pick_short("Guten Morgen", ["Good morning", "Good morning to you"], [-0.2, -0.21]) == 0
+
+
+def test_only_one_to_three_word_inputs_use_the_nbest_search():
+    from whisperclaude.translator import Translator
+
+    calls = []
+
+    class Result:
+        def __init__(self, tokens):
+            self.hypotheses, self.scores = tokens, [-0.3, -0.35]
+
+    class Model:
+        def translate_batch(self, batch, **kwargs):
+            calls.append(kwargs)
+            return [Result([["eng_Latn", "x"], ["eng_Latn", "y"]]) for _ in batch]
+
+    class Lazy:
+        def use(self):
+            from contextlib import nullcontext
+            return nullcontext(Model())
+
+    t = Translator.__new__(Translator)
+    t.beam_size, t._lazy = 2, Lazy()
+    t._sources = lambda sentences, source, target: ["deu_Latn"] * len(sentences)
+    t._tokens = lambda sentence, source: [source, "a", "</s>"]
+    t._decode = lambda tokens: " ".join(tokens[1:])
+    t.translate("Ja", "eng_Latn")
+    t.translate("Das ist ein längerer Satz.", "eng_Latn")
+    t.translate("Ja. Nein.", "eng_Latn")
+    assert calls[0]["num_hypotheses"] > 1 and calls[0]["beam_size"] > 2 and calls[0]["return_scores"]
+    assert "num_hypotheses" not in calls[1] and calls[1]["beam_size"] == 2
+    assert "num_hypotheses" not in calls[2]  # two sentences
