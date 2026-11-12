@@ -5,6 +5,9 @@ STARTING: the start tap opens the microphone on a worker thread (a mic that was 
 0.3-0.7 s to wake up, which would block the Tk thread and cost the first word). The pill turns
 to RECORDING only when the first audio block has arrived. A stop tap or Esc during STARTING
 cancels; a failed open, or no audio within MIC_START_TIMEOUT_S, ends in IDLE with an error.
+If the open itself hangs (PortAudio after a wake), a stop tap or MIC_OPEN_TIMEOUT_S ends in IDLE
+at once and the stuck worker is abandoned: its stream is closed if it ever opens, and no second
+open starts before it has returned.
 
 The translate key adds TRANSLATING: IDLE -> TRANSLATING -> IDLE for selected text, and
 RECORDING -> TRANSCRIBING -> TRANSLATING -> IDLE for a dictation. Both ask for the target
@@ -49,6 +52,7 @@ MIC_STARTED = "mic_started" # worker -> Tk: first audio block or failure; payloa
 MIN_AUDIO_S = 0.3
 LIVE_FEED_S = 5.0 # while recording, hand the audio so far to the live transcription this often
 MIC_START_TIMEOUT_S = 2.0 # an opened microphone that delivers no audio for this long = failed
+MIC_OPEN_TIMEOUT_S = 10.0 # recorder.start() that does not return for this long = PortAudio hangs
 
 
 class WakeQueue(queue.Queue):
@@ -152,11 +156,33 @@ class _TranslateJob:
 
 class _MicStart:
     """One microphone start. wake is set by the recorder's audio callback (first block) or by
-    cancel(), so the worker waiting for audio ends at once either way."""
+    cancel(), so the worker waiting for audio ends at once either way.
+
+    opened/abandoned (under lock) decide who owns a stream that opens late: once recorder.start()
+    has returned (opened) the worker reports as usual; if the app gave up before that
+    (abandoned), the worker closes the stream itself and reports nothing."""
 
     def __init__(self) -> None:
         self.wake = threading.Event()
         self.cancelled = False # only touched on the Tk thread
+        self.returned = threading.Event() # the worker is completely done with the recorder
+        self.opened = self.abandoned = False
+        self.watchdog: threading.Timer | None = None # reports a hung open
+        self._lock = threading.Lock()
+
+    def mark_opened(self) -> bool:
+        """Worker: recorder.start() returned or raised. True if the app abandoned this start."""
+        with self._lock:
+            self.opened = True
+            return self.abandoned
+
+    def abandon(self) -> bool:
+        """Give up on a start whose open has not returned. False if it already has."""
+        with self._lock:
+            if self.opened or self.abandoned:
+                return False
+            self.abandoned = True
+            return True
 
     def cancel(self) -> None:
         self.cancelled = True
@@ -256,6 +282,7 @@ class App:
         self._rec_started = 0.0
         self._live: _LiveRun | None = None
         self._mic: _MicStart | None = None # the microphone start in progress (STARTING)
+        self._stuck_open: _MicStart | None = None # an abandoned start whose worker is still stuck
         self._job: _TranslateJob | None = None # translation waiting for the picker
         self._own_events = self._event_table()
 
@@ -453,10 +480,26 @@ class App:
 
     def _start_recording(self) -> None:
         """Tk thread: enter STARTING and open the microphone on a worker thread."""
+        stuck = self._stuck_open
+        if stuck is not None and not stuck.returned.is_set():
+            # PortAudio and the Recorder are not safe for a second open next to a hung one
+            log.warning("start tap ignored: the previous microphone open is still stuck")
+            self.on_state(State.IDLE, "Microphone not responding, restart WhisperClaude")
+            return
+        self._stuck_open = None
         attempt = self._mic = _MicStart()
         self._set(State.STARTING)
+        attempt.watchdog = threading.Timer(MIC_OPEN_TIMEOUT_S, self._open_timed_out, args=(attempt,))
+        attempt.watchdog.daemon = True
+        attempt.watchdog.start()
         threading.Thread(target=self._open_mic, args=(attempt,), daemon=True,
                          name="mic-start").start()
+
+    def _open_timed_out(self, attempt: _MicStart) -> None:
+        """Watchdog thread: the worker is stuck inside recorder.start(), so it cannot report."""
+        if attempt.abandon():
+            log.warning("opening the microphone did not return after %.0f s", MIC_OPEN_TIMEOUT_S)
+            self.events.put((MIC_STARTED, (attempt, TimeoutError("Microphone did not open"))))
 
     def _open_mic(self, attempt: _MicStart) -> None:
         """Worker thread: open the stream, wait for its first audio block, report either way.
@@ -464,12 +507,22 @@ class App:
         error: Exception | None = None
         try:
             self.recorder.start(attempt.wake.set)
-            if not attempt.wake.wait(MIC_START_TIMEOUT_S):
-                log.warning("no audio from the microphone after %.1f s", MIC_START_TIMEOUT_S)
-                error = TimeoutError("Microphone did not start")
         except Exception as e: # e.g. no microphone
             log.exception("could not start recording")
             error = e
+        attempt.watchdog.cancel()
+        if attempt.mark_opened(): # the app gave up on this start while we were stuck
+            log.warning("the microphone opened late, closing it")
+            try:
+                self.recorder.stop()
+            except Exception:
+                log.exception("could not close the late microphone")
+            attempt.returned.set()
+            return
+        if error is None and not attempt.wake.wait(MIC_START_TIMEOUT_S):
+            log.warning("no audio from the microphone after %.1f s", MIC_START_TIMEOUT_S)
+            error = TimeoutError("Microphone did not start")
+        attempt.returned.set()
         self.events.put((MIC_STARTED, (attempt, error)))
 
     def _on_mic_started(self, payload: object) -> None:
@@ -477,6 +530,10 @@ class App:
         if attempt is not self._mic:
             return
         self._mic = None
+        if attempt.abandoned: # open hung: the stuck worker closes its stream if it ever opens
+            self._stuck_open = attempt
+            self._set(State.IDLE, f"Error: {error}")
+            return
         if attempt.cancelled or error is not None:
             try:
                 self.recorder.stop() # closes a stream that did open; harmless otherwise
@@ -489,9 +546,15 @@ class App:
     def _cancel_start(self) -> None:
         """Stop tap or Esc while STARTING: the worker ends at once, and its report closes the
         stream (if it opened) and goes to IDLE. Until then the pill says so."""
-        if self._mic is not None and not self._mic.cancelled:
+        attempt = self._mic
+        if attempt is not None and not attempt.cancelled:
             log.info("start cancelled")
-            self._mic.cancel()
+            attempt.cancel()
+            if attempt.abandon(): # still inside recorder.start(): no report will come
+                log.warning("the microphone open is stuck, abandoning it")
+                self._mic, self._stuck_open = None, attempt
+                self._set(State.IDLE, "Cancelled")
+                return
             self.on_state(State.STARTING, "Cancelling…")
 
     def _begin_recording(self) -> None:

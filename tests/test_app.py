@@ -534,6 +534,68 @@ def test_quit_during_starting_cancels_the_start():
     assert rec.opened.wait(2) and wait_for(lambda: not app.events.empty()) # worker ended
 
 
+# ---------- a hung microphone open (PortAudio stuck after a wake) must not trap the app ----------
+
+class HungRecorder(SnapshotRecorder):
+    """start() blocks until the test sets `let_open` (a PortAudio call that hangs)."""
+
+    def __init__(self):
+        super().__init__(auto_block=False)
+        self.let_open = threading.Event()
+        self.in_start = threading.Event()
+
+    def start(self, on_first_block=None):
+        self.in_start.set()
+        self.let_open.wait(10)
+        super().start(on_first_block)
+
+
+def hung_app():
+    rec = HungRecorder()
+    states = []
+    app = App(rec, BlockingTranscriber(), lambda t: None,
+              on_state=lambda s, msg="": states.append((s, msg)))
+    return app, rec, states
+
+
+def test_stop_tap_while_the_microphone_open_hangs_returns_to_idle():
+    app, rec, states = hung_app()
+    app.handle(TOGGLE)
+    assert rec.in_start.wait(2) # the worker is stuck inside start()
+    app.handle(TOGGLE) # stop tap: no report will ever come from the worker
+    assert app.state is State.IDLE and states[-1] == (State.IDLE, "Cancelled")
+    rec.let_open.set() # the stuck call finally returns: its late stream is closed again
+    assert wait_for(lambda: rec.stopped == 1) and not rec.is_open
+    assert wait_for(app._stuck_open.returned.is_set) and app.events.empty() # no stale report
+    rec.auto_block = True
+    begin(app) # and the next recording works
+    assert app.state is State.RECORDING
+
+
+def test_hung_microphone_open_times_out_to_idle_with_an_error(monkeypatch):
+    monkeypatch.setattr(app_module, "MIC_OPEN_TIMEOUT_S", 0.05)
+    app, rec, states = hung_app()
+    app.handle(TOGGLE)
+    assert rec.in_start.wait(2)
+    finish(app) # the watchdog reports
+    assert app.state is State.IDLE and states[-1] == (State.IDLE, "Error: Microphone did not open")
+    assert rec.stopped == 0 # nothing to close yet, and never synchronously on the Tk thread
+    rec.let_open.set()
+    assert wait_for(lambda: rec.stopped == 1) and not rec.is_open
+
+
+def test_no_second_open_while_the_first_one_is_still_stuck():
+    app, rec, states = hung_app()
+    app.handle(TOGGLE)
+    assert rec.in_start.wait(2)
+    app.handle(TOGGLE) # cancel -> IDLE, the worker stays stuck
+    app.handle(TOGGLE) # new start tap: must not open a second stream in parallel
+    assert app.state is State.IDLE and "not responding" in states[-1][1]
+    assert rec.started == 0
+    rec.let_open.set()
+    assert wait_for(app._stuck_open.returned.is_set)
+
+
 # ---------- history and the pill's "Copy" offer ----------
 
 def test_transcript_is_saved_before_the_paste_and_offered_for_copying():
