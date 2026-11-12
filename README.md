@@ -13,12 +13,18 @@ Requirements: Windows 11, Python 3.12 or newer and 3–5 GB of disk space for th
 ```powershell
 git clone https://github.com/philipp-sz/WhisperClaude.git
 cd WhisperClaude
-py -m venv .venv
-.venv\Scripts\python.exe -m pip install -e .
-.venv\Scripts\python.exe -m whisperclaude
+py scripts\setup.py
 ```
 
-For an NVIDIA GPU, install the CUDA libraries as well (about 1.3 GB): `.venv\Scripts\python.exe -m pip install -e .[cuda]`. The first run downloads the models. On an iGPU it also compiles the model once, which takes about 15 s. Autostart registers two Task Scheduler tasks without admin rights. One starts the app at login. The other restarts it after an unlock or a wake from sleep if Windows closed it.
+The setup script detects the hardware and prints what the app will use (Whisper model and device, translation model), then creates `.venv`, installs the app (with the CUDA libraries, about 1.3 GB, on an NVIDIA GPU), shows the model sizes and asks before downloading them (about 1–5 GB; `--yes` skips the question). It then runs `scripts\check_env.py` and offers autostart. `--dry-run` prints every step without doing it. It is safe to run again. Then start the app:
+
+```powershell
+.venv\Scripts\pythonw.exe -m whisperclaude     # without console (as autostart does); python.exe for a console
+```
+
+Manual install, without the script: `py -m venv .venv`, then `.venv\Scripts\python.exe -m pip install -e .` (or `-e .[cuda]` on an NVIDIA GPU). The first start downloads the models. On an iGPU it also compiles the model once, which takes about 15 s.
+
+Autostart registers two Task Scheduler tasks without admin rights. One starts the app at login. The other restarts it after an unlock or a wake from sleep if Windows closed it. The setup script offers it; by hand:
 
 ```powershell
 .venv\Scripts\python.exe scripts\install_autostart.py            # install and start
