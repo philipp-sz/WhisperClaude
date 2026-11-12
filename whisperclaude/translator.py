@@ -283,17 +283,29 @@ class LazyModel:
         over, unloads, and ends."""
         delay = self.unload_after_s
         while not self._stop.wait(delay):
-            with self._lock:
-                remaining = self.unload_after_s - self._idle_s()
-                if not self._loaded or remaining <= 0:
-                    self._watcher = None # first: a failing unload must not leave a dead watcher
-                    if self._loaded: # (the next load then starts a new one)
-                        try:
-                            self._unload_locked()
-                        except Exception:
-                            log.exception("could not unload the translation model")
-                    return
+            remaining = self._check_idle()
+            if remaining is None:
+                return
             delay = max(remaining, 0.5)
+
+    def _check_idle(self) -> float | None:
+        """Under the lock: the idle time still to wait, or None after unloading (the watcher
+        ends)."""
+        with self._lock:
+            remaining = self.unload_after_s - self._idle_s()
+            if self._loaded and remaining > 0:
+                return remaining
+            self._watcher = None # first: a failing unload must not leave a dead watcher
+            if self._loaded: # (the next load then starts a new one)
+                self._unload_quietly()
+            return None
+
+    def _unload_quietly(self) -> None:
+        """Unloads for the idle watcher; a failure is logged, not raised."""
+        try:
+            self._unload_locked()
+        except Exception:
+            log.exception("could not unload the translation model")
 
     def close(self) -> None:
         """Stop the idle watcher (tests)."""

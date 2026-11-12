@@ -530,23 +530,40 @@ def create_transcriber(
     large-v3 was 4x slower at the same accuracy."""
     common = dict(language=language, initial_prompt=initial_prompt, vocabulary=vocabulary)
     if device in ("auto", "gpu", "cuda"):
-        if cuda_available():
-            try:
-                return CudaTranscriber(gpu_model, on_status=on_status, beam_size=beam_size,
-                                       **common)
-            except Exception:
-                log.exception("CUDA backend failed, trying the next one")
-        else:
-            log.info("no usable NVIDIA GPU found")
+        cuda = _cuda_transcriber(gpu_model, on_status, beam_size, common)
+        if cuda is not None:
+            return cuda
     if device in ("auto", "gpu", "igpu"):
-        ov_device = intel_gpu()
-        if ov_device:
-            try:
-                model = GPU_MODEL if gpu_model == "auto" else gpu_model
-                return OpenVinoTranscriber(model, ov_device, on_status=on_status, **common)
-            except Exception:
-                log.exception("GPU backend failed, falling back to CPU")
-        else:
-            log.info("no OpenVINO GPU found, using CPU")
+        openvino = _openvino_transcriber(gpu_model, on_status, common)
+        if openvino is not None:
+            return openvino
     on_status("Loading model…")
     return Transcriber(cpu_model, **common, beam_size=beam_size or 1, **cpu_kwargs)
+
+
+def _cuda_transcriber(gpu_model: str, on_status: Callable[[str], None], beam_size: int,
+                      common: dict) -> CudaTranscriber | None:
+    """A CUDA transcriber, or None if there is no usable NVIDIA GPU or it fails to load."""
+    if not cuda_available():
+        log.info("no usable NVIDIA GPU found")
+        return None
+    try:
+        return CudaTranscriber(gpu_model, on_status=on_status, beam_size=beam_size, **common)
+    except Exception:
+        log.exception("CUDA backend failed, trying the next one")
+        return None
+
+
+def _openvino_transcriber(gpu_model: str, on_status: Callable[[str], None],
+                          common: dict) -> OpenVinoTranscriber | None:
+    """An OpenVINO transcriber on the Intel iGPU, or None if there is none or it fails to load."""
+    ov_device = intel_gpu()
+    if not ov_device:
+        log.info("no OpenVINO GPU found, using CPU")
+        return None
+    model = GPU_MODEL if gpu_model == "auto" else gpu_model
+    try:
+        return OpenVinoTranscriber(model, ov_device, on_status=on_status, **common)
+    except Exception:
+        log.exception("GPU backend failed, falling back to CPU")
+        return None

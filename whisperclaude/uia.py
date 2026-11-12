@@ -15,6 +15,7 @@ Result of `CaretReader.text_before(n)`:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 import ctypes
 import logging
 import queue
@@ -83,70 +84,89 @@ def _out_ptr(call, *args) -> int | None:
     return out.value
 
 
+def _keep(owned: list[int], ptr: int | None) -> int | None:
+    """Remember a COM pointer to release when the read ends; returns it unchanged."""
+    if ptr:
+        owned.append(ptr)
+    return ptr
+
+
+def _caret_from_text_pattern2(get_pattern: Callable, owned: list[int]) -> int | None:
+    """The caret range via TextPattern2 (also in a terminal without a selection), or None."""
+    pattern2 = _keep(owned, _out_ptr(get_pattern, _TEXT_PATTERN2))
+    if not pattern2:
+        return None
+    get_caret = _slot(pattern2, _TP2_GET_CARET_RANGE, ctypes.POINTER(wintypes.BOOL),
+                      ctypes.POINTER(ctypes.c_void_p))
+    active, caret_out = wintypes.BOOL(), ctypes.c_void_p()
+    try:
+        get_caret(ctypes.byref(active), ctypes.byref(caret_out))
+    except OSError:
+        return None
+    return _keep(owned, caret_out.value)
+
+
+def _selection_start(get_pattern: Callable, owned: list[int]) -> int | None:
+    """The start of the first range of the TextPattern selection, or None."""
+    pattern = _keep(owned, _out_ptr(get_pattern, _TEXT_PATTERN))
+    if not pattern:
+        return None
+    array = _keep(owned, _out_ptr(_slot(pattern, _TP_GET_SELECTION,
+                                        ctypes.POINTER(ctypes.c_void_p))))
+    if not array:
+        return None
+    length = ctypes.c_int()
+    _slot(array, _ARRAY_LENGTH, ctypes.POINTER(ctypes.c_int))(ctypes.byref(length))
+    if length.value < 1:
+        return None
+    return _keep(owned, _out_ptr(_slot(array, _ARRAY_GET_ELEMENT, ctypes.c_int,
+                                       ctypes.POINTER(ctypes.c_void_p)), 0))
+
+
+def _caret_range(automation: int, owned: list[int]) -> int | None:
+    """The text range at the caret (or the selection start) of the focused element, or None."""
+    element = _keep(owned, _out_ptr(_slot(automation, _GET_FOCUSED_ELEMENT,
+                                          ctypes.POINTER(ctypes.c_void_p))))
+    if not element:
+        return None
+    get_pattern = _slot(element, _GET_CURRENT_PATTERN, ctypes.c_int,
+                        ctypes.POINTER(ctypes.c_void_p))
+    return (_caret_from_text_pattern2(get_pattern, owned)
+            or _selection_start(get_pattern, owned))
+
+
+def _text_before_range(rng: int, n: int) -> str:
+    """The up to n characters before the start of rng (collapsed there first)."""
+    # collapse to the start (a selection is replaced by the paste), then extend n back
+    _slot(rng, _RANGE_MOVE_ENDPOINT_BY_RANGE, ctypes.c_int, ctypes.c_void_p, ctypes.c_int)(
+        _ENDPOINT_END, rng, _ENDPOINT_START)
+    moved = ctypes.c_int()
+    _slot(rng, _RANGE_MOVE_ENDPOINT_BY_UNIT, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+          ctypes.POINTER(ctypes.c_int))(_ENDPOINT_START, _UNIT_CHARACTER, -n, ctypes.byref(moved))
+    if moved.value == 0:
+        return ""
+    bstr = ctypes.c_void_p()
+    _slot(rng, _RANGE_GET_TEXT, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
+        n, ctypes.byref(bstr))
+    if not bstr.value:
+        return ""
+    try:
+        return ctypes.wstring_at(bstr.value)
+    finally:
+        _oleaut32.SysFreeString(bstr.value)
+
+
 def _range_before_caret(automation: int, n: int) -> str | None:
     """Worker-thread body: the up to n characters before the caret/selection start, or None."""
     owned: list[int] = []
-
-    def keep(ptr: int | None) -> int | None:
-        if ptr:
-            owned.append(ptr)
-        return ptr
-
     try:
-        element = keep(_out_ptr(_slot(automation, _GET_FOCUSED_ELEMENT,
-                                      ctypes.POINTER(ctypes.c_void_p))))
-        if not element:
-            return None
-        get_pattern = _slot(element, _GET_CURRENT_PATTERN, ctypes.c_int,
-                            ctypes.POINTER(ctypes.c_void_p))
-        caret = None
-        pattern2 = keep(_out_ptr(get_pattern, _TEXT_PATTERN2))
-        if pattern2: # TextPattern2: the caret itself (also in a terminal without a selection)
-            get_caret = _slot(pattern2, _TP2_GET_CARET_RANGE, ctypes.POINTER(wintypes.BOOL),
-                              ctypes.POINTER(ctypes.c_void_p))
-            active, caret_out = wintypes.BOOL(), ctypes.c_void_p()
-            try:
-                get_caret(ctypes.byref(active), ctypes.byref(caret_out))
-                caret = keep(caret_out.value)
-            except OSError:
-                caret = None
-        if not caret:
-            pattern = keep(_out_ptr(get_pattern, _TEXT_PATTERN))
-            if not pattern:
-                return None
-            array = keep(_out_ptr(_slot(pattern, _TP_GET_SELECTION,
-                                        ctypes.POINTER(ctypes.c_void_p))))
-            length = ctypes.c_int()
-            if not array:
-                return None
-            _slot(array, _ARRAY_LENGTH, ctypes.POINTER(ctypes.c_int))(ctypes.byref(length))
-            if length.value < 1:
-                return None
-            caret = keep(_out_ptr(_slot(array, _ARRAY_GET_ELEMENT, ctypes.c_int,
-                                        ctypes.POINTER(ctypes.c_void_p)), 0))
+        caret = _caret_range(automation, owned)
         if not caret:
             return None
-        rng = keep(_out_ptr(_slot(caret, _RANGE_CLONE, ctypes.POINTER(ctypes.c_void_p))))
+        rng = _keep(owned, _out_ptr(_slot(caret, _RANGE_CLONE, ctypes.POINTER(ctypes.c_void_p))))
         if not rng:
             return None
-        # collapse to the start (a selection is replaced by the paste), then extend n back
-        _slot(rng, _RANGE_MOVE_ENDPOINT_BY_RANGE, ctypes.c_int, ctypes.c_void_p, ctypes.c_int)(
-            _ENDPOINT_END, rng, _ENDPOINT_START)
-        moved = ctypes.c_int()
-        _slot(rng, _RANGE_MOVE_ENDPOINT_BY_UNIT, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-              ctypes.POINTER(ctypes.c_int))(_ENDPOINT_START, _UNIT_CHARACTER, -n,
-                                            ctypes.byref(moved))
-        if moved.value == 0:
-            return ""
-        bstr = ctypes.c_void_p()
-        _slot(rng, _RANGE_GET_TEXT, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
-            n, ctypes.byref(bstr))
-        if not bstr.value:
-            return ""
-        try:
-            return ctypes.wstring_at(bstr.value)
-        finally:
-            _oleaut32.SysFreeString(bstr.value)
+        return _text_before_range(rng, n)
     except OSError:
         return None # e.g. UIA_E_NOTSUPPORTED, or the element vanished
     finally:

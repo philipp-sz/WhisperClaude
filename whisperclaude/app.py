@@ -208,23 +208,36 @@ class _LiveRun:
         while not self._stop.wait(LIVE_FEED_S):
             audio = snapshot()
             if watching:
-                try: # only the new audio (+1 s overlap), so this stays cheap
-                    if self.live.has_speech(audio[max(0, checked - SAMPLE_RATE):]):
-                        heard = len(audio)
-                    checked = len(audio)
-                except Exception:
-                    log.exception("speech check failed, no auto-stop for this recording")
-                    watching = False
-                if watching and len(audio) - heard >= self._stop_after_s * SAMPLE_RATE:
-                    log.info("no speech for %.0f s, stopping the recording", self._stop_after_s)
-                    self._on_silence()
-                    return
+                scan = self._scan_speech(audio, heard, checked)
+                watching = scan is not None
+                if scan is not None:
+                    heard, checked = scan
+            if watching and len(audio) - heard >= self._stop_after_s * SAMPLE_RATE:
+                log.info("no speech for %.0f s, stopping the recording", self._stop_after_s)
+                self._on_silence()
+                return
             if feeding:
-                try:
-                    self.live.feed(audio)
-                except Exception: # what wasn't fed is transcribed after the stop instead
-                    log.exception("live transcription failed")
-                    feeding = False
+                feeding = self._feed_live(audio)
+
+    def _scan_speech(self, audio: np.ndarray, heard: int, checked: int) -> tuple[int, int] | None:
+        """Checks only the new audio (+1 s overlap) for speech. Returns the new (heard, checked)
+        marks, or None if the check failed (then there is no auto-stop for this recording)."""
+        try:
+            has_speech = self.live.has_speech(audio[max(0, checked - SAMPLE_RATE):])
+        except Exception:
+            log.exception("speech check failed, no auto-stop for this recording")
+            return None
+        return (len(audio) if has_speech else heard), len(audio)
+
+    def _feed_live(self, audio: np.ndarray) -> bool:
+        """Feeds the audio to the live transcription; False if that failed. What wasn't fed is
+        transcribed after the stop instead."""
+        try:
+            self.live.feed(audio)
+        except Exception:
+            log.exception("live transcription failed")
+            return False
+        return True
 
     def stop(self) -> None:
         """Stop feeding (doesn't wait; finish() does)."""
@@ -629,12 +642,7 @@ class App:
         error is reported and the picker closed."""
         try:
             t0 = time.perf_counter()
-            try:
-                text = live.finish(audio) if live else self.transcriber.transcribe(audio)
-            except Exception:
-                if self.reload is None:
-                    raise
-                text = self._reload_and_retry(audio)
+            text = self._transcribe_retrying(audio, live)
             early = getattr(live.live, "done_s", 0.0) if live else 0.0
             log.info("transcribed %.1f s audio in %.2f s after the stop (%.0f s while recording)",
                      len(audio) / SAMPLE_RATE, time.perf_counter() - t0, early)
@@ -645,6 +653,16 @@ class App:
                 self.events.put((UNPICK, job))
             self.events.put((ERROR, str(e)))
             return None
+
+    def _transcribe_retrying(self, audio: np.ndarray, live: _LiveRun | None) -> str:
+        """Finishes the live transcription or transcribes all of the audio; a failing model is
+        reloaded and the audio retried once (if there is a reload)."""
+        try:
+            return live.finish(audio) if live else self.transcriber.transcribe(audio)
+        except Exception:
+            if self.reload is None:
+                raise
+            return self._reload_and_retry(audio)
 
     def _reload_and_retry(self, audio: np.ndarray) -> str:
         """Worker thread: the model failed (e.g. the GPU driver was reset); load it again (on the

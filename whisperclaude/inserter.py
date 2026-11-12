@@ -82,11 +82,7 @@ def _opened(timeout: float = 1.0) -> Iterator[None]:
     while another app holds it."""
     hwnd = _CreateWindowExW(0, "STATIC", None, 0, 0, 0, 0, 0, HWND_MESSAGE, None, None, None)
     try:
-        deadline = time.monotonic() + timeout
-        while not _OpenClipboard(hwnd):
-            if time.monotonic() > deadline:
-                raise ClipboardError(f"clipboard busy (error {ctypes.get_last_error()})")
-            time.sleep(0.01)
+        _open_clipboard(hwnd, timeout)
         try:
             yield
         finally:
@@ -94,6 +90,15 @@ def _opened(timeout: float = 1.0) -> Iterator[None]:
     finally:
         if hwnd:
             _DestroyWindow(hwnd)
+
+
+def _open_clipboard(hwnd: int, timeout: float) -> None:
+    """Opens the clipboard for hwnd, retrying until timeout; raises ClipboardError if busy."""
+    deadline = time.monotonic() + timeout
+    while not _OpenClipboard(hwnd):
+        if time.monotonic() > deadline:
+            raise ClipboardError(f"clipboard busy (error {ctypes.get_last_error()})")
+        time.sleep(0.01)
 
 
 def save_clipboard() -> Saved:

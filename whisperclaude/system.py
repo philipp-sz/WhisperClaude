@@ -55,28 +55,36 @@ def user_languages() -> list[str]:
     return [c for i, c in enumerate(codes) if c in SOURCE_CODES and c not in codes[:i]]
 
 
+class _NvmlMemory(ctypes.Structure):
+    """nvmlMemory_t: sizes in bytes."""
+
+    _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong),
+                ("used", ctypes.c_ulonglong)]
+
+
 def free_vram_mb() -> int | None:
     """Free memory of the first NVIDIA GPU in MB, from NVML (installed with the driver);
     None if unknown."""
-
-    class Memory(ctypes.Structure):
-        _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong),
-                    ("used", ctypes.c_ulonglong)]
-
     try:
-        nvml = ctypes.WinDLL("nvml.dll")
-        if nvml.nvmlInit_v2() != 0:
-            return None
-        try:
-            handle, memory = ctypes.c_void_p(), Memory()
-            if (nvml.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(handle)) != 0
-                    or nvml.nvmlDeviceGetMemoryInfo(handle, ctypes.byref(memory)) != 0):
-                return None
-            return memory.free // 2**20
-        finally:
-            nvml.nvmlShutdown()
-    except (OSError, AttributeError):
+        return _nvml_free_mb()
+    except (OSError, AttributeError): # no NVML (no NVIDIA driver, or an old one)
         return None
+
+
+def _nvml_free_mb() -> int | None:
+    """Free memory of GPU 0 in MB via NVML; None if NVML reports an error. Raises OSError or
+    AttributeError if nvml.dll or one of its functions is missing."""
+    nvml = ctypes.WinDLL("nvml.dll")
+    if nvml.nvmlInit_v2() != 0:
+        return None
+    try:
+        handle, memory = ctypes.c_void_p(), _NvmlMemory()
+        if (nvml.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(handle)) != 0
+                or nvml.nvmlDeviceGetMemoryInfo(handle, ctypes.byref(memory)) != 0):
+            return None
+        return memory.free // 2**20
+    finally:
+        nvml.nvmlShutdown()
 
 
 def load_cuda_libraries() -> bool:
