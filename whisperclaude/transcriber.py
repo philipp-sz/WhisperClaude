@@ -16,9 +16,11 @@ from pathlib import Path
 
 import numpy as np
 from faster_whisper import BatchedInferencePipeline, WhisperModel
+from huggingface_hub import snapshot_download
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 
 from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY, SAMPLE_RATE # noqa: F401 (re-exported)
+from whisperclaude.system import cuda_available, free_vram_mb, load_cuda_libraries
 from whisperclaude.textfix import join_chunks
 
 log = logging.getLogger(__name__)
@@ -313,7 +315,7 @@ def intel_gpu() -> str | None:
     GPU plugin is made for Intel GPUs, so only devices named Intel count.
     """
     try:
-        import openvino as ov
+        import openvino as ov # deferred: optional on NVIDIA/CPU-only machines, ~185 ms
         core = ov.Core()
         for device in core.available_devices:
             if (device.startswith("GPU")
@@ -341,8 +343,7 @@ class OpenVinoTranscriber:
         vocabulary: Sequence[str] = (),
         on_status: Callable[[str], None] = lambda s: None,
     ) -> None:
-        import openvino_genai
-        from huggingface_hub import snapshot_download
+        import openvino_genai # deferred: optional (CUDA/CPU machines), ~205 ms
 
         self.device = device
         self.language = language
@@ -425,56 +426,10 @@ class OpenVinoTranscriber:
         return LiveTranscription(self.transcribe_chunks, self._detect)
 
 
-def load_cuda_libraries() -> bool:
-    """Load cuBLAS and cuDNN from the pip packages of the [cuda] extra (nvidia-cublas-cu12,
-    nvidia-cudnn-cu12). CTranslate2 loads them by name only when the GPU is first used, and
-    Windows doesn't search the packages' folders: a DLL that is already loaded is found.
-    Returns False if they aren't installed."""
-    import ctypes
-    import importlib.util
-
-    loaded = False
-    for package in ("nvidia.cublas", "nvidia.cudnn"):
-        try:
-            spec = importlib.util.find_spec(package)
-        except ModuleNotFoundError:
-            spec = None
-        for folder in (spec.submodule_search_locations or []) if spec else []:
-            for dll in sorted(Path(folder, "bin").glob("*.dll")):
-                ctypes.WinDLL(str(dll))
-                loaded = True
-    return loaded
-
-
 CUDA_BEAM = 5 # beam_size 0 (auto) on CUDA: fewer errors in all four test sets, +5 % time
 LOW_VRAM_MB = 4096 # less free VRAM: int8 weights (turbo: half the memory, same accuracy)
 LARGE_VRAM_MB = 7000 # model "auto" with this much free: large-v3 (3.9 GB) + room for NLLB
 GPU_MODEL = "large-v3-turbo" # model "auto" otherwise, and always on the iGPU
-
-
-def free_vram_mb() -> int | None:
-    """Free memory of the first NVIDIA GPU in MB, from NVML (installed with the driver);
-    None if unknown."""
-    import ctypes
-
-    class Memory(ctypes.Structure):
-        _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong),
-                    ("used", ctypes.c_ulonglong)]
-
-    try:
-        nvml = ctypes.WinDLL("nvml.dll")
-        if nvml.nvmlInit_v2() != 0:
-            return None
-        try:
-            handle, memory = ctypes.c_void_p(), Memory()
-            if (nvml.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(handle)) != 0
-                    or nvml.nvmlDeviceGetMemoryInfo(handle, ctypes.byref(memory)) != 0):
-                return None
-            return memory.free // 2**20
-        finally:
-            nvml.nvmlShutdown()
-    except (OSError, AttributeError):
-        return None
 
 
 def cuda_compute_type(free_mb: int | None) -> str:
@@ -499,42 +454,6 @@ def cuda_choice(model: str, free_mb: int | None) -> tuple[str, str]:
     if free_mb >= LARGE_VRAM_MB:
         return "large-v3", "float16"
     return ("large-v3" if free_mb >= LOW_VRAM_MB else GPU_MODEL), "int8_float16"
-
-
-_PROBES = {
-    "igpu": ("import openvino as ov, sys; c = ov.Core(); sys.exit(0 if any(d.startswith('GPU') and 'intel' in "
-             "str(c.get_property(d, 'FULL_DEVICE_NAME')).lower() for d in c.available_devices) else 1)"),
-    "cuda": "import ctranslate2, sys; sys.exit(0 if ctranslate2.get_cuda_device_count() > 0 else 1)",
-}
-
-
-def gpu_present(kind: str, timeout_s: float = 60.0) -> bool:
-    """Whether a GPU of `kind` ("igpu" / "cuda") can be seen now, checked in a fresh process.
-
-    In the running process a vanished device may stay vanished (the device list is read once
-    per plugin), so a short-lived subprocess asks instead (0.4 s measured), only run while
-    the app is on its CPU fallback (see recovery.py).
-    """
-    import subprocess
-    import sys
-
-    try:
-        done = subprocess.run([sys.executable, "-c", _PROBES[kind]], timeout=timeout_s, capture_output=True,
-                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return done.returncode == 0
-    except Exception:
-        log.info("GPU check (%s) failed", kind, exc_info=True)
-        return False
-
-
-def cuda_available() -> bool:
-    """True if there is an NVIDIA GPU and the CUDA libraries of the [cuda] extra are installed."""
-    try:
-        import ctranslate2
-        return ctranslate2.get_cuda_device_count() > 0 and load_cuda_libraries()
-    except Exception:
-        log.info("CUDA check failed", exc_info=True)
-        return False
 
 
 class CudaTranscriber(OpenVinoTranscriber):

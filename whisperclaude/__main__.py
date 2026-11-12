@@ -44,11 +44,13 @@ from whisperclaude.inserter import ClipboardError, copy_text, paste_text
 from whisperclaude.languages import LANGUAGES
 from whisperclaude.overlay import KEPT_S, Overlay, enable_dpi_awareness
 from whisperclaude.picker import LanguagePicker
-from whisperclaude.recorder import Recorder
+from whisperclaude.recorder import Recorder, load_sounddevice
+from whisperclaude.system import MIN_RAM_GB, gpu_present, total_ram_gb
 from whisperclaude.translation import RecentLanguages, Translation
 from whisperclaude.tray import Tray
-# whisperclaude.transcriber and .translator are imported by the loader thread: they pull in
-# the heavy Whisper stack (ctranslate2, onnxruntime, OpenVINO), which must not delay the UI.
+# whisperclaude.transcriber and .translator are imported by the loader thread (deferred imports
+# in create_from_config and _load_translator): they pull in the heavy Whisper stack
+# (ctranslate2, onnxruntime, OpenVINO), which must not delay the UI.
 if TYPE_CHECKING:
     from whisperclaude.transcriber import OpenVinoTranscriber, Transcriber
 
@@ -124,7 +126,7 @@ def spawn_new_instance() -> None:
 
 def create_from_config(m: ModelConfig, on_status=lambda text: None):
     """The transcriber for the [model] settings (heavy import, so only on worker threads)."""
-    from whisperclaude.transcriber import create_transcriber
+    from whisperclaude.transcriber import create_transcriber # deferred: ~180 ms + the model stack, loader thread only
 
     return create_transcriber(
         device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model, on_status=on_status,
@@ -154,7 +156,7 @@ def _load_whisper(events: WakeQueue, m: ModelConfig, quiet: bool = False) -> boo
 def _load_translator(t: TranslationConfig, translation: Translation) -> None:
     """Loader thread: the translation model, handed to `translation` directly."""
     try:
-        from whisperclaude.translator import Translator
+        from whisperclaude.translator import Translator # deferred: ctranslate2, tokenizers, py3langid; loader thread only
 
         t0 = time.perf_counter()
         translator = Translator(t.model, t.device, t.cpu_threads, languages=t.my_languages,
@@ -180,7 +182,7 @@ def start_model_loading(events: WakeQueue, m: ModelConfig, t: TranslationConfig,
     was said; reproduced 3/66 with, 0/66 without). Commands still work without them.
     """
     def run() -> None:
-        import sounddevice # noqa: F401 # ~150 ms (PortAudio init): here, not in the first start() on the Tk thread
+        load_sounddevice() # ~100 ms (PortAudio init): here, not in the first start() on the Tk thread
         if _load_whisper(events, m) and translation is not None:
             _load_translator(t, translation)
 
@@ -412,8 +414,6 @@ class Session:
         kind = self.watch.missing
 
         def run() -> None:
-            from whisperclaude.transcriber import gpu_present
-
             self.events.put((PROBED, gpu_present(kind)))
 
         threading.Thread(target=run, daemon=True, name="gpu-probe").start()
@@ -499,8 +499,6 @@ def lean_cpu_math(ram_gb: float | None) -> bool:
     2.2x the translation time and 1.2x Whisper small's (measured 2026-11-11). Big machines keep
     the speed. Must run before ctranslate2 is first imported.
     """
-    from whisperclaude.translator import MIN_RAM_GB
-
     lean = ram_gb is not None and ram_gb < MIN_RAM_GB
     if lean:
         os.environ.setdefault("CT2_USE_MKL", "0")
@@ -509,8 +507,6 @@ def lean_cpu_math(ram_gb: float | None) -> bool:
 
 def main() -> None:
     log_path = setup_logging()
-    from whisperclaude.translator import MIN_RAM_GB, total_ram_gb
-
     if lean_cpu_math(total_ram_gb()):
         log.info("less than %d GiB of RAM: CTranslate2 without MKL (less committed memory)", MIN_RAM_GB)
     mutex = claim_instance(log_path.parent)

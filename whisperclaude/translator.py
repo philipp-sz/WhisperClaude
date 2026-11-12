@@ -20,7 +20,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Protocol
 
+import ctranslate2
+from huggingface_hub import snapshot_download
+from py3langid.langid import MODEL_FILE, LanguageIdentifier
+from tokenizers import Tokenizer
+
 from whisperclaude.languages import NLLB_CODES, SOURCE_CODES
+from whisperclaude.system import MIN_RAM_GB, cuda_available, free_vram_mb, total_ram_gb, user_languages
 
 log = logging.getLogger(__name__)
 
@@ -29,8 +35,6 @@ MODELS = { # config name -> pre-converted CTranslate2 model (int8) on Hugging Fa
     "nllb-1.3b": "OpenNMT/nllb-200-distilled-1.3B-ct2-int8",
 }
 LOW_VRAM_MB = 2048 # "auto" on CUDA with less free VRAM (after Whisper): the smaller model
-MIN_RAM_GB = 12 # "auto" on the CPU with less RAM: the smaller model. A "16 GB" PC reports about
-# 15.5 GiB (the rest is reserved), an "8 GB" one about 7.5 GiB. See docs/translation.md
 MIN_DETECT_CHARS = 25 # shorter sentences take the language of the whole text
 MIN_CONFIDENCE = 0.9
 
@@ -98,36 +102,11 @@ def tidy(source: str, text: str, target: str) -> str:
     return text
 
 
-def user_languages() -> list[str]:
-    """ISO codes of the user's own languages, most likely first: the Windows display
-    language, the keyboard layouts, then English."""
-    import ctypes
-
-    def iso(langid: int) -> str:
-        name = ctypes.create_unicode_buffer(85)
-        ctypes.windll.kernel32.LCIDToLocaleName(langid & 0xFFFF, name, 85, 0)
-        return name.value.split("-")[0].lower()
-
-    codes = [iso(ctypes.windll.kernel32.GetUserDefaultUILanguage())]
-    try:
-        user32 = ctypes.windll.user32
-        n = user32.GetKeyboardLayoutList(0, None)
-        layouts = (ctypes.c_void_p * n)()
-        user32.GetKeyboardLayoutList(n, layouts)
-        codes += [iso(h or 0) for h in layouts]
-    except OSError:
-        pass
-    codes.append("en")
-    return [c for i, c in enumerate(codes) if c in SOURCE_CODES and c not in codes[:i]]
-
-
 @functools.lru_cache(maxsize=1)
 def _identifier():
     """The py3langid model restricted to SOURCE_CODES, loaded once (~0.5 s) and shared.
     set_languages() mutates the identifier, but only here and always with the same list, so
     sharing is safe. Per-instance state (`preferred`) stays on LanguageDetector."""
-    from py3langid.langid import MODEL_FILE, LanguageIdentifier
-
     identifier = LanguageIdentifier.from_model_file(MODEL_FILE, norm_probs=True)
     identifier.set_languages([c for c in identifier.nb_classes if c in SOURCE_CODES])
     return identifier
@@ -182,16 +161,6 @@ def source_languages(sentences: list[str], detect: Callable[[str], tuple[str, fl
                 code = lang
         codes.append(code)
     return codes
-
-
-def total_ram_gb() -> float | None:
-    """Installed RAM in GiB (what Windows makes usable); None if unknown."""
-    try:
-        import psutil
-        return psutil.virtual_memory().total / 2**30
-    except Exception:
-        log.info("could not read the RAM size", exc_info=True)
-        return None
 
 
 def auto_model(device: str, free_vram_mb: int | None, ram_gb: float | None) -> str:
@@ -348,11 +317,8 @@ class Translator:
                  languages: tuple[str, ...] = (), unload_after_s: float = 0.0) -> None:
         """model "auto": by memory, see auto_model. languages: the user's own languages (ISO
         codes, most used first); () = Windows'. unload_after_s: see LazyModel, 0 = keep loaded."""
-        from tokenizers import Tokenizer
-
         self.device = self._pick_device(device)
         if model == "auto":
-            from whisperclaude.transcriber import free_vram_mb
             model = auto_model(self.device, free_vram_mb() if self.device == "cuda" else None,
                                total_ram_gb())
         self.model_name = model
@@ -370,7 +336,6 @@ class Translator:
 
     def _pick_device(self, device: str) -> str:
         if device in ("auto", "cuda"):
-            from whisperclaude.transcriber import cuda_available
             if cuda_available():
                 return "cuda"
             if device == "cuda":
@@ -379,7 +344,6 @@ class Translator:
 
     @staticmethod
     def _model_path(repo: str, on_status: Callable[[str], None]) -> str:
-        from huggingface_hub import snapshot_download
         try: # cached: no network request at startup
             return snapshot_download(repo, local_files_only=True)
         except Exception:
@@ -387,7 +351,6 @@ class Translator:
             return snapshot_download(repo)
 
     def _build_model(self, path: str, cpu_threads: int) -> Model:
-        import ctranslate2
         compute = "int8_float16" if self.device == "cuda" else "int8"
         return ctranslate2.Translator(path, device=self.device, compute_type=compute,
                                       intra_threads=cpu_threads)
