@@ -12,7 +12,7 @@ flowchart LR
     F --> G[Transcribe the<br/>remaining chunks]
     G --> H[Text fixes, optional<br/>spoken commands]
     H --> I[Save to history]
-    I --> J[Clipboard + Ctrl+V<br/>into the focused app]
+    I --> J[Clipboard + Ctrl+V into the focused app,<br/>a leading space if behind text]
     J --> K[Restore the<br/>old clipboard]
 ```
 
@@ -52,7 +52,7 @@ A start tap opens the microphone on a worker thread. The pill shows "Starting…
 
 ## Clipboard and history
 
-The app writes the clipboard only to paste and restores the previous content afterwards. Dictations that are not pasted stay in the local history, see [interface.md](interface.md#clipboard-and-history).
+The app writes the clipboard only to paste and restores the previous content afterwards. Before pasting it checks the character before the caret and adds a leading space when the dictation would run into text ([interface.md](interface.md#spacing-at-the-insertion-point)). Dictations that are not pasted stay in the local history, see [interface.md](interface.md#clipboard-and-history).
 
 ## Measurements
 

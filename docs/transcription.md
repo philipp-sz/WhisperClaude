@@ -111,6 +111,8 @@ Whisper was trained on subtitles. With timestamps it splits text at pauses and c
 
 Beam search on the iGPU (2026-11-12): OpenVINO GenAI 2026.4 refuses `num_beams > 1` on the GPU ("Not Implemented") and `num_return_sequences > 1`. Optimum Intel (`OVModelForSpeechSeq2Seq`, Hugging Face's own `generate()` on the same OpenVINO model) does run beam search on the iGPU: on the author's 24 recordings 131 errors greedy (app), 127 with 2 beams, 122 with 4 (−7%, fewer deletions and insertions, names and sound-alikes unchanged), but 2.7 times slower per chunk and with torch and transformers (1.4 GB) as dependencies. Not adopted. Details in [real-recordings.md](real-recordings.md#fourth-round-experiments-and-decisions-2026-11-12).
 
+Prompt sentence (2026-11-12): 15 variants on the author's 24 recordings and the corpus; none beat the current one beyond the noise, and any prompt that leans towards one language makes Whisper translate chunks of the other. Keep it short and balanced. Details in [real-recordings.md](real-recordings.md#fifth-round-experiments-and-decisions-2026-11-12-evening).
+
 ## Chunking and quality
 
 Corpus: 13 texts read by the author (about 25 s each; German, English, mixed, German with anglicisms), plus five long dictations joined from them with 2–3.5 s pauses and an extra 2.5 s pause in the middle of a sentence. `scripts/eval_quality.py` measures word error rate (WER), case errors, time and GPU time.

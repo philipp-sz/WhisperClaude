@@ -287,3 +287,25 @@ The first word can be lost when the user speaks right at the tap. Opening the st
 - **Spoken e-mail addresses** (backlog item 9): a rule for German and English words ("max punkt muster at gmail punkt com" → "max.muster@gmail.com") was built and passed a hidden test set, but **not kept**: never tested on real dictated addresses, and only German and English words. Next step if revived: record 10–15 dictated addresses first.
 - **Deterministic text fixes for the remaining errors**: none worth building; the remaining errors depend on context (sound-alikes, colloquial forms the author really said, names). About 15 counted errors are scoring questions (compound spacing such as "drauf gekommen", "x Quadrat" against "x²"); undecided.
 - **Animation cost**: the tray icon is practically free (cached frames); fewer frames per second for the waves would save more but needs an eye test.
+
+## Fifth round: experiments and decisions (2026-11-12 evening)
+
+Again parallel subagent experiments; at most one used the iGPU at a time.
+
+### Built (committed 2026-11-12)
+
+| Change | Evidence |
+|---|---|
+| Robustness: a failing pill/tray update no longer strands the state machine (lost dictation, stuck in TRANSCRIBING); the backup poll and Quit go on after a failing step; no PortAudio re-initialisation while a stream is opening (`Recorder._starting`) | tests in `test_bughunt.py`, each failing before the fix; a fuzz run of 1,500 random event sequences through the real `App` found no lost, doubled or stuck dictation |
+| A hung microphone open: a 10 s watchdog (`MIC_OPEN_TIMEOUT_S`) or a stop tap returns to IDLE; a stream that opens late is closed; no second open while the first is stuck | `test_app.py` (`HungRecorder`) |
+| Translating a selection with a very long whitespace run hung (quadratic regex, 14 s at 40k spaces); now linear (0.4 s for 400k), identical results on 4,000 random lines | `test_translator.py` |
+| Generic key names `ctrl`/`alt` are rejected (pynput's hook only reports the left/right variants, so they never fired); `alt_r` is mapped to `alt_gr`, which is what the hook reports | `test_hotkey.py`, `test_config.py` |
+| Smart spacing at the insertion point ([interface.md](interface.md#spacing-at-the-insertion-point)) | tried by the author in the real app: works |
+| Imports at the top (PEP 8); light system probes moved to `system.py`; the remaining deferred imports save startup time or are optional backends, each commented | UI-path startup 138 → 126 ms |
+
+### Measured, not built
+
+- **Prompt sentence** (15 variants, 24 recordings + corpus; FLEURS not cached): keep the current prompt. The best variant (English sentence first) gave 124 against 131 errors, within the noise: the same recordings at 0.8× gain gave 188 errors for the current prompt. The big effects are language flips: a prompt that leans German translated English chunks into German (+40 to +56 errors per recording), one that leans English translated German recordings (609 errors). Only short, balanced German + English prompts are safe. Idea: force each chunk's detected language, which would make the prompt far less fragile.
+- **Translation speed** (NLLB-1.3B on the CPU): nothing to gain, see [translation.md](translation.md#call-settings-2026-11-12).
+- **Short translation inputs** (192 invented 1–4 word inputs): 71% correct, 8% with added words ("Ja" → "Yes, I did."), 21% wrong meaning ("Einstellungen" → "Employment", "Speichern" → "Storage"). The wrong meanings are the larger problem; fixes (length caps, n-best, wrapping, NLLB-600M) are prepared but not run.
+- **Live text preview** above the pill (finished chunks while recording): built and working, **not kept by the author**.
