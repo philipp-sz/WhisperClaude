@@ -32,6 +32,7 @@ class Recorder:
         self._lock = threading.Lock()
         self._stream: sd.InputStream | None = None
         self._closer: threading.Thread | None = None # background close of the last stream
+        self._starting = threading.RLock() # held by start(); refresh_devices() skips meanwhile
         self.level = 0.0 # RMS of the latest audio block, for the overlay's level bars
         self._on_first_block: Callable[[], None] | None = None
 
@@ -85,17 +86,23 @@ class Recorder:
         """Re-scan audio devices. PortAudio lists them once at import, so a device that
         appeared or changed later (new logon session, wake from sleep, headset plugged in)
         stays invisible or stale until re-initialised. Not while recording."""
-        if self._stream is not None:
+        if not self._starting.acquire(blocking=False): # a stream is opening on another thread
+            log.info("not refreshing audio devices: the microphone is starting")
             return
-        self._wait_for_close()
         try:
-            import sounddevice as sd
+            if self._stream is not None:
+                return
+            self._wait_for_close()
+            try:
+                import sounddevice as sd
 
-            sd._terminate()
-            sd._initialize()
-            log.info("audio devices refreshed")
-        except Exception:
-            log.exception("could not refresh audio devices")
+                sd._terminate()
+                sd._initialize()
+                log.info("audio devices refreshed")
+            except Exception:
+                log.exception("could not refresh audio devices")
+        finally:
+            self._starting.release()
 
     def start(self, on_first_block: Callable[[], None] | None = None) -> None:
         """Open the mic and start collecting audio. Raises if no input device works.
@@ -104,21 +111,22 @@ class Recorder:
         thread. on_first_block is called once, from the audio thread, when the first block of
         audio has arrived: only from then on is anything recorded.
         """
-        if self._stream is not None:
-            if on_first_block is not None:
-                on_first_block() # already running: audio is flowing
-            return
-        self._wait_for_close()
-        self._chunks = []
-        self._on_first_block = on_first_block
-        import sounddevice as sd
+        with self._starting: # PortAudio must not be re-initialised under an opening stream
+            if self._stream is not None:
+                if on_first_block is not None:
+                    on_first_block() # already running: audio is flowing
+                return
+            self._wait_for_close()
+            self._chunks = []
+            self._on_first_block = on_first_block
+            import sounddevice as sd
 
-        try:
-            self._stream = self._open()
-        except sd.PortAudioError as e:
-            log.warning("opening the microphone failed (%s), refreshing devices and retrying", e)
-            self.refresh_devices()
-            self._stream = self._open()
+            try:
+                self._stream = self._open()
+            except sd.PortAudioError as e:
+                log.warning("opening the microphone failed (%s), refreshing devices and retrying", e)
+                self.refresh_devices()
+                self._stream = self._open()
 
     def snapshot(self) -> np.ndarray:
         """Everything recorded so far, while recording continues (thread-safe)."""

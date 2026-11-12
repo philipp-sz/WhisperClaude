@@ -445,8 +445,11 @@ class Session:
         restart = self.app.exit_reason == RESTART
         log.info("restarting" if restart else "quitting")
         self.events.wake = lambda: None
-        self.listener.stop()
-        self.tray.stop()
+        for stop in (self.listener.stop, self.tray.stop): # a failing one must not stop the quit
+            try:
+                stop()
+            except Exception:
+                log.exception("could not stop %s", getattr(stop, "__self__", stop))
         self.overlay.show_goodbye("Restarting…" if restart else "WhisperClaude stopped",
                                   lambda: self._finish(restart), restart)
 
@@ -459,26 +462,29 @@ class Session:
 
     def backup_poll(self) -> None:
         """Every BACKUP_POLL_MS: stall and resume detection, the heartbeat, a pump."""
-        now = time.monotonic()
-        stall, self.last_poll = now - self.last_poll - BACKUP_POLL_MS / 1000, now
-        if 2.0 < stall < self.gap.threshold_s:
-            # The UI thread didn't get to run for a while (e.g. cold-disk DLL loading holds the
-            # GIL during the model load at logon): the pill can't animate in that time.
-            log.warning("UI thread was blocked for %.1f s", stall)
-        slept = self.gap.check()
-        if slept:
-            # Waking from sleep (session kept alive): Windows may have dropped our keyboard
-            # hook and PortAudio's device list may be stale. Both are cheap to renew.
-            log.info("resume detected (%.0f s gap): re-arming hotkey, refreshing audio", slept)
-            self.listener.restart()
-            self.recorder.refresh_devices()
-        if self.watch.due(resumed=bool(slept)):
-            self._start_probe()
-        self._apply_upgrade()
-        if now - self.last_beat >= HEARTBEAT_S:
-            self.last_beat = now
-            lifecycle.heartbeat(self.data_dir)
-        self.pump()
+        try:
+            now = time.monotonic()
+            stall, self.last_poll = now - self.last_poll - BACKUP_POLL_MS / 1000, now
+            if 2.0 < stall < self.gap.threshold_s:
+                # The UI thread didn't get to run for a while (e.g. cold-disk DLL loading holds the
+                # GIL during the model load at logon): the pill can't animate in that time.
+                log.warning("UI thread was blocked for %.1f s", stall)
+            slept = self.gap.check()
+            if slept:
+                # Waking from sleep (session kept alive): Windows may have dropped our keyboard
+                # hook and PortAudio's device list may be stale. Both are cheap to renew.
+                log.info("resume detected (%.0f s gap): re-arming hotkey, refreshing audio", slept)
+                self.listener.restart()
+                self.recorder.refresh_devices()
+            if self.watch.due(resumed=bool(slept)):
+                self._start_probe()
+            self._apply_upgrade()
+            if now - self.last_beat >= HEARTBEAT_S:
+                self.last_beat = now
+                lifecycle.heartbeat(self.data_dir)
+            self.pump()
+        except Exception: # this poll is the safety net: it must go on whatever one step did
+            log.exception("backup poll failed")
         if not self.stopped:
             self.root.after(BACKUP_POLL_MS, self.backup_poll)
 

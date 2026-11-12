@@ -266,7 +266,10 @@ class App:
 
     def _set(self, state: State, msg: str = "") -> None:
         self.state = state
-        self.on_state(state, msg)
+        try:
+            self.on_state(state, msg)
+        except Exception: # a UI failure must not strand the state machine (e.g. skip the worker)
+            log.exception("on_state callback failed")
 
     def handle(self, kind: str, payload: object = None) -> None:
         """Process one event."""
