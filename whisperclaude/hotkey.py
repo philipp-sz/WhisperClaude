@@ -12,6 +12,7 @@ from pynput import mouse
 from pynput.keyboard import Key, KeyCode, Listener
 
 from whisperclaude.app import CANCEL, TOGGLE, TRANSLATE
+from whisperclaude.spacing import is_modifier
 
 log = logging.getLogger(__name__)
 
@@ -152,8 +153,12 @@ class HotkeyListener:
 
     def __init__(self, events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,
                  max_hold: float = MAX_HOLD_S, cancel_key: Key | KeyCode | None = None,
-                 translate_key: Key | KeyCode | None = None) -> None:
+                 translate_key: Key | KeyCode | None = None,
+                 on_input: Callable[[], None] | None = None) -> None:
+        """on_input: called (inside the hook, so it must be trivial) for every key that is not a
+        modifier and every mouse click: whatever can move the caret or change the text."""
         self._events, self._key, self._max_hold = events, key, max_hold
+        self._on_input = on_input
         self._cancel_key = cancel_key
         self._translate_vk = key_vk(translate_key) if translate_key is not None else 0
         self._start()
@@ -170,6 +175,8 @@ class HotkeyListener:
         # (seen with two fingers on the touchpad). Injected record-key events never form a tap;
         # injected other keys still interrupt one.
         def on_press(k: Key | KeyCode | None, injected: bool = False) -> None:
+            if self._on_input is not None and not injected and not is_modifier(k):
+                self._on_input()
             if injected and k == self._key:
                 return
             tap.press(k)
@@ -186,10 +193,15 @@ class HotkeyListener:
             tap.interrupt()
             translate.interrupt()
 
+        def on_click(x: int, y: int, button: object, pressed: bool) -> None:
+            if pressed and self._on_input is not None:
+                self._on_input()
+            interrupt()
+
         self._keyboard = Listener(on_press=on_press, on_release=on_release,
                                   win32_event_filter=translate)
         self._mouse = mouse.Listener(
-            on_click=lambda x, y, button, pressed: interrupt(),
+            on_click=on_click,
             on_scroll=lambda x, y, dx, dy: interrupt(),
         )
         for listener in (self._keyboard, self._mouse):
@@ -229,6 +241,7 @@ class GapDetector:
 def start_hotkey_listener(events: queue.Queue, key: Key | KeyCode = DEFAULT_KEY,
                           max_hold: float = MAX_HOLD_S,
                           cancel_key: Key | KeyCode | None = None,
-                          translate_key: Key | KeyCode | None = None) -> HotkeyListener:
+                          translate_key: Key | KeyCode | None = None,
+                          on_input: Callable[[], None] | None = None) -> HotkeyListener:
     """Start listening. Call .stop() on the result to end it."""
-    return HotkeyListener(events, key, max_hold, cancel_key, translate_key)
+    return HotkeyListener(events, key, max_hold, cancel_key, translate_key, on_input)

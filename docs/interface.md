@@ -35,3 +35,15 @@ Pasting needs the clipboard: the app puts the text there, sends Ctrl+V and resto
 | A dictation's translation failed | "Translation failed: …" + Copy (the original) | |
 
 Every dictation is saved to the history before it is pasted, so a paste into a window without a text field cannot lose it. A translated dictation or selection is one entry with both texts.
+
+## Spacing at the insertion point
+
+Whisper's text has no leading space, so a second dictation pasted behind the first ran into it ("works.Next"). With `[insert] smart_spacing` (default on) the paste is adapted to what stands before the caret (`spacing.py`, `uia.py`). History and the Copy button keep the transcript as it is; only the pasted text differs. No text is logged.
+
+1. **UI Automation** (`uia.CaretReader`): the focused control's TextPattern2 caret range (TextPattern selection as fallback) is moved back by one character and that character is read: 3-11 ms. It runs on its own long-lived COM thread; the paste waits at most 50 ms, a stuck app costs one timeout and further reads are refused until it answers. The thread starts at app start, because loading UIA takes about 70 ms.
+2. **Last paste** (`spacing.PasteTracker`), when UIA says nothing (Tk and other self-drawn UIs): if the next paste goes to the same foreground window, within 5 minutes, and the hook saw no key (modifiers excluded: Ctrl/Alt are our hotkeys) and no mouse click since, the caret still is behind the last text.
+3. **Rule** (`needs_space`): a space is added unless the caret is at the start of the text, after whitespace or a line break, after an opening bracket or `/ \ @ # $ ~ „ ¿ ¡`, or the dictation starts with whitespace or closing punctuation (`.,;:!?…)]}%`). Unknown context: pasted as is.
+
+`[insert] adapt_case` (default off) also lowercases the first word when the sentence goes on (last non-blank character before the caret on the same line is a letter, comma or semicolon). Only function words (`FUNCTION_WORDS`: the, und, dass, ...) are lowercased, never nouns (German), "I", acronyms or names. It stays off because the guess fails at sentence ends without punctuation (titles, list items typed without a period) and because the benefit is small next to the spacing.
+
+Measured support (2026-11-12; own test windows, VS Code: the focused field of the running instance): Notepad (Windows 11), Edge textarea, Windows Terminal (PowerShell) and VS Code answer; Tk Entry and Text do not (fallback). Chromium turns its accessibility tree on when a UIA client asks; the cost of that in the browser is not measured.

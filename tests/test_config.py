@@ -154,3 +154,22 @@ def test_unload_after_min(tmp_path, value, ok):
     else:
         with pytest.raises(ConfigError, match="unload_after_min"):
             load_config(path)
+
+
+# ---------- [insert] ----------
+
+def test_insert_defaults_and_overrides(tmp_path):
+    shipped = load_config(CONFIG_PATH).insert
+    assert (shipped.smart_spacing, shipped.adapt_case) == (True, False)
+    assert Config().insert == shipped # the shipped file shows the defaults
+    cfg = load_config(write(tmp_path, "[insert]\nsmart_spacing = false\nadapt_case = true\n"))
+    assert (cfg.insert.smart_spacing, cfg.insert.adapt_case) == (False, True)
+
+
+@pytest.mark.parametrize("text, message", [
+    ('[insert]\nsmart_spacing = "yes"', "expected bool"),
+    ("[insert]\nspacing = true", "unknown key 'spacing'"),
+])
+def test_insert_invalid(tmp_path, text, message):
+    with pytest.raises(ConfigError, match=message):
+        load_config(write(tmp_path, text))

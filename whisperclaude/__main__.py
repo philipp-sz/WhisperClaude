@@ -41,6 +41,8 @@ from whisperclaude import lifecycle, recovery
 from whisperclaude.hotkey import GapDetector, key_label, parse_key, start_hotkey_listener
 from whisperclaude.history import History
 from whisperclaude.inserter import ClipboardError, copy_text, paste_text
+from whisperclaude.spacing import PasteTracker, SmartPaster
+from whisperclaude.uia import CaretReader
 from whisperclaude.languages import LANGUAGES
 from whisperclaude.overlay import KEPT_S, Overlay, enable_dpi_awareness
 from whisperclaude.picker import LanguagePicker
@@ -253,12 +255,14 @@ class Session:
         self.upgrade = None # a model loaded on the returned GPU, waiting for the app to be idle
         self.last_poll = self.last_beat = time.monotonic()
         self._build_ui()
+        self.tracker = PasteTracker()
         self._build_app()
         hk = self.cfg.hotkey
         self.listener = start_hotkey_listener(
             self.events, parse_key(hk.key), hk.max_hold_s,
             parse_key(hk.cancel_key) if hk.cancel_key else None,
-            parse_key(self.cfg.translation.key) if self.translation else None)
+            parse_key(self.cfg.translation.key) if self.translation else None,
+            self.tracker.note_input)
         self.overlay.show_starting("Loading model…")
         log.info("UI, tray and hotkey up %.1f s after process start; loading the model",
                  time.time() - psutil.Process().create_time())
@@ -289,6 +293,10 @@ class Session:
                                            key_label(cfg.translation.key),
                                            cfg.translation.my_languages)
         paste = functools.partial(paste_text, restore_delay=cfg.paste.restore_delay_s)
+        if cfg.insert.smart_spacing:
+            reader = CaretReader()
+            reader.start() # loads UI Automation on its own thread, off the UI path
+            paste = SmartPaster(paste, reader.text_before, self.tracker, cfg.insert.adapt_case)
         self.recorder = Recorder()
         self.overlay.level_fn = lambda: self.recorder.level
         cmd = cfg.commands

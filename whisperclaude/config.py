@@ -115,6 +115,12 @@ class PasteConfig:
 
 
 @dataclass(frozen=True)
+class InsertConfig:
+    smart_spacing: bool = True # a space in front of the text if the caret is right behind a word
+    adapt_case: bool = False # lowercase "The", "und", ... when the sentence goes on (spacing.py)
+
+
+@dataclass(frozen=True)
 class CommandsConfig:
     enabled: bool = False # opt-in: turn on in config.toml
     trigger: str = "command" # say "<trigger> new line", "<trigger> bullet", ...
@@ -164,6 +170,7 @@ class Config:
     tray: TrayConfig = field(default_factory=TrayConfig)
     pill: PillConfig = field(default_factory=PillConfig)
     paste: PasteConfig = field(default_factory=PasteConfig)
+    insert: InsertConfig = field(default_factory=InsertConfig)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
 
@@ -175,7 +182,7 @@ class Config:
 
 SECTIONS = {"hotkey": HotkeyConfig, "model": ModelConfig, "recording": RecordingConfig,
             "history": HistoryConfig, "tray": TrayConfig, "pill": PillConfig,
-            "paste": PasteConfig,
+            "paste": PasteConfig, "insert": InsertConfig,
             "commands": CommandsConfig, "translation": TranslationConfig}
 
 
