@@ -6,7 +6,17 @@ import uuid
 
 import pytest
 
-from whisperclaude.early import MUTEX_NAME, _open_mutex, quiet_duplicate
+from whisperclaude.early import MUTEX_NAME, _open_mutex, quiet_duplicate, single_thread_blas
+
+
+@pytest.mark.parametrize("env, expected", [
+    ({}, "1"), # default: one OpenBLAS thread (less private memory)
+    ({"OPENBLAS_NUM_THREADS": "4"}, "4"), # an explicit setting wins
+])
+def test_single_thread_blas(env, expected):
+    environ = dict(env)
+    single_thread_blas(environ)
+    assert environ["OPENBLAS_NUM_THREADS"] == expected
 
 
 @pytest.mark.parametrize("argv, exists, expected", [

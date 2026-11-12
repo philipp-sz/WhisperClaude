@@ -13,9 +13,10 @@ thread. Model loader: short-lived, loads Whisper and then the translation model.
 from __future__ import annotations
 
 import sys
-from whisperclaude.early import quiet_duplicate
+from whisperclaude.early import quiet_duplicate, single_thread_blas
 if __name__ == "__main__" and quiet_duplicate(sys.argv):
     sys.exit(0) # already running: exit before the heavy imports (no log line, no threads yet)
+single_thread_blas() # before numpy (and so OpenBLAS) is imported below
 
 import ctypes
 import functools

@@ -7,12 +7,25 @@ psutil. The authoritative check stays claim_instance() in __main__ (race-free).
 from __future__ import annotations
 
 import ctypes
+import os
 from ctypes import wintypes
 from collections.abc import Callable
 
 MUTEX_NAME = "Local\\WhisperClaude"
 SILENT_FLAGS = ("--autostart", "--revive") # duplicates of these exit silently
 SYNCHRONIZE = 0x00100000
+
+
+def single_thread_blas(environ: dict = os.environ) -> None:
+    """Default numpy's OpenBLAS to one thread. Must run before numpy is first imported.
+
+    OpenBLAS allocates a buffer per thread at import: with 8 threads numpy alone added 234 MB of
+    private memory (9 MB with one thread). Whisper turbo on the iGPU then idled 225 MB less
+    (1603 -> 1379 MB private after the warm-up), with identical transcripts (de and en clips),
+    and a load time within noise (+0.07 s median, measured 2026-11-12). An explicit
+    OPENBLAS_NUM_THREADS in the environment wins.
+    """
+    environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
 
 def _open_mutex(name: str) -> int:
