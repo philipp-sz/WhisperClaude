@@ -133,3 +133,48 @@ def test_silence_gives_empty_text():
     silence = np.zeros(60 * SR, np.float32)
     live.feed(silence)
     assert live.finish(silence) == ""
+
+
+def test_live_detects_an_ended_passage_during_the_feed_not_after_the_stop():
+    """The language of a passage is needed to merge it; detecting it once it has ended (2.5 s of
+    silence behind it) takes that GPU pass out of the wait after the stop tap."""
+    audio = dictation(n_bursts=3, speech_s=8, pause_s=3) # 33 s: bursts at 0-8, 11-19, 22-30
+    detected = []
+    live = t.LiveTranscription(fake_model, lambda a: detected.append(round(a.max())) or
+                               language_of_burst(a))
+    live.feed(audio[:14 * SR]) # below LIVE_MIN_TAIL_S, burst 2 still being spoken
+    assert detected == [1] # burst 1 ended (a second one exists, so its language will be needed)
+    live.feed(audio[:25 * SR]) # burst 2 ended 3 s ago, burst 3 is being spoken
+    assert detected == [1, 2]
+    before_stop = len(detected)
+    live.finish(audio)
+    assert detected[before_stop:] == [3] # only the last passage, which had no end yet
+
+
+def test_live_detection_during_feed_changes_neither_grouping_nor_text():
+    audio = dictation(n_bursts=12)
+    for detect in (language_of_burst, lambda a: "de"):
+        live = t.LiveTranscription(fake_model, detect)
+        for end in range(5 * SR, len(audio), 5 * SR):
+            live.feed(audio[:end])
+        text = live.finish(audio)
+        assert text == fake_model(t.speech_chunks(audio, detect))
+        assert text == " ".join(f"w{k}" for k in range(1, 13))
+
+
+def test_live_detects_nothing_for_a_single_passage():
+    """One passage never needs a language: no GPU pass, however long the silence after it."""
+    audio = np.concatenate([np.full(8 * SR, 1, np.float32), np.zeros(10 * SR, np.float32)])
+    calls = []
+    live = t.LiveTranscription(fake_model, lambda a: calls.append(1) or "de")
+    live.feed(audio[:12 * SR])
+    live.feed(audio)
+    assert live.finish(audio) == "w1"
+    assert calls == []
+
+
+def test_live_without_a_detector_does_no_detection():
+    audio = dictation(n_bursts=4)
+    live = t.LiveTranscription(fake_model)
+    live.feed(audio)
+    assert live.finish(audio) == "w1 w2 w3 w4"

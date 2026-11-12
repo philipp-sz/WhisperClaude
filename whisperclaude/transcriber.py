@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 CHUNK_S = 30 # Whisper's window
 LIVE_MARGIN_S = 5 # live transcription leaves the newest audio alone (the VAD may still change it)
 LIVE_MIN_TAIL_S = 15 # ... and only looks for finished chunks once this much is untranscribed
+LIVE_DETECT_MARGIN_S = 2.5 # a segment is final (VAD: >= 2 s of silence + padding after it): detect its language
 LEAD_IN_S = 0.5 # silence put before every chunk (see _join)
 OV_CACHE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "WhisperClaude" / "ov_cache"
 
@@ -91,8 +92,14 @@ def vad_input(audio: np.ndarray) -> np.ndarray:
 Detect = Callable[[np.ndarray], str] # audio -> language code (one cheap encoder pass)
 
 
+def _vad_segments(audio: np.ndarray) -> list[dict]:
+    """Speech segments ({"start", "end"} in samples) between pauses of >= 2 s, split at 30 s."""
+    return get_speech_timestamps(vad_input(audio), VadOptions(max_speech_duration_s=CHUNK_S))
+
+
 def _speech_groups(audio: np.ndarray, detect: Detect | None = None, offset: int = 0,
-                   cache: dict | None = None, until: int | None = None) -> list[list[dict]]:
+                   cache: dict | None = None, until: int | None = None,
+                   segments: list[dict] | None = None) -> list[list[dict]]:
     """VAD speech segments ({"start", "end"} in samples), grouped into chunks of <= 30 s.
 
     A segment is speech between pauses of >= 2 s (longer stretches are split at 30 s). Whisper
@@ -106,9 +113,11 @@ def _speech_groups(audio: np.ndarray, detect: Detect | None = None, offset: int 
     segment; single-segment dictations skip it). `cache` keeps detected languages by absolute
     start position (`offset` + sample) across live feeds. `until`: only segments that end
     before this sample (live: a segment still being spoken is neither detected nor grouped;
-    its first second alone was detected wrongly).
+    its first second alone was detected wrongly). `segments`: the VAD result of `audio`, if the
+    caller has it already.
     """
-    segments = get_speech_timestamps(vad_input(audio), VadOptions(max_speech_duration_s=CHUNK_S))
+    if segments is None:
+        segments = _vad_segments(audio)
     if until is not None:
         segments = [seg for seg in segments if seg["end"] <= until]
     cache = {} if cache is None else cache
@@ -168,8 +177,23 @@ class LiveTranscription:
         self._done = 0 # samples already transcribed
         self._texts: list[str] = []
 
-    def _groups(self, tail: np.ndarray, until: int | None = None) -> list[list[dict]]:
-        return _speech_groups(tail, self._detect, self._done, self._languages, until)
+    def _groups(self, tail: np.ndarray, until: int | None = None,
+                segments: list[dict] | None = None) -> list[list[dict]]:
+        return _speech_groups(tail, self._detect, self._done, self._languages, until, segments)
+
+    def _detect_ended(self, tail: np.ndarray, segments: list[dict]) -> None:
+        """Detect (and cache, under the key _speech_groups uses) the language of every segment
+        that has ended, now instead of after the stop tap: ~0.27 s of iGPU per segment that
+        would otherwise sit between the stop and the text. A segment ended once the VAD has
+        seen its silence, so its audio (and language) can't change any more. A lone first
+        segment is skipped: its language is only needed once a second segment exists, and a
+        short dictation (one segment) should cost no extra pass at all."""
+        limit = len(tail) - LIVE_DETECT_MARGIN_S * SAMPLE_RATE
+        for seg in segments:
+            key = self._done + seg["start"]
+            if seg["end"] > limit or key in self._languages or len(segments) < 2:
+                continue
+            self._languages[key] = self._detect(tail[seg["start"]:seg["end"]])
 
     @property
     def done_s(self) -> float:
@@ -177,10 +201,16 @@ class LiveTranscription:
 
     def feed(self, audio: np.ndarray) -> None:
         tail = audio[self._done:]
+        if len(tail) < LIVE_DETECT_MARGIN_S * SAMPLE_RATE:
+            return
+        segments = _vad_segments(tail) # ~4 ms per second of audio
+        if self._detect is not None:
+            self._detect_ended(tail, segments)
         if len(tail) < LIVE_MIN_TAIL_S * SAMPLE_RATE:
-            return # not worth a VAD pass yet
+            return # not worth transcribing yet
         # Only finished segments; the last group may still be joined by the next one.
-        final = self._groups(tail, until=len(tail) - LIVE_MARGIN_S * SAMPLE_RATE)[:-1]
+        final = self._groups(tail, until=len(tail) - LIVE_MARGIN_S * SAMPLE_RATE,
+                             segments=segments)[:-1]
         if final:
             self._texts.append(self._transcribe_chunks([_join(tail, g) for g in final]))
             self._done += final[-1][-1]["end"]
