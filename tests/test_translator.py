@@ -1,4 +1,8 @@
 """Translation helpers (no model): sentence splitting, layout, source languages, search."""
+import random
+import re
+import time
+
 import pytest
 
 from whisperclaude.languages import BY_CODE, COMMON, LANGUAGES, NLLB_CODES, SOURCE_CODES, search
@@ -175,3 +179,28 @@ def test_recent_sources_and_own_languages(tmp_path):
     t._translator, t.my_languages = None, ("es", "en")
     assert t.own_sources() == ["spa_Latn", "eng_Latn"] # from the config until loaded
     assert t.guess("Hola") == [] # nothing detected while the model loads
+
+
+# The original line splitter; its lazy (.*?) before (\s*)$ is quadratic on a long inner whitespace run.
+_OLD_LINE = re.compile(r"^(\s*(?:[-*•]\s+|\d+[.)]\s+|>\s*)?)(.*?)(\s*)$")
+
+
+def _old_segment(text):
+    return [(p, split_sentences(b), s) for p, b, s in (_OLD_LINE.match(line).groups()
+                                                      for line in text.split("\n"))]
+
+
+def test_segment_is_linear_on_a_long_whitespace_run():
+    start = time.perf_counter()
+    rows = segment("a" + " " * 200_000 + "b" + " " * 200_000)
+    assert time.perf_counter() - start < 0.5
+    assert rows[0][2] == " " * 200_000
+
+
+def test_segment_matches_the_old_regex_on_random_lines():
+    rng = random.Random(1)
+    alphabet = ["a", "B", "1", ".", ")", "-", "*", "•", ">", " ", " ", "\t", "\r", "\n", " ",
+                "　", "\x1c", "​", "é", "。", "!"]
+    for _ in range(4000):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 25)))
+        assert segment(text) == _old_segment(text), repr(text)

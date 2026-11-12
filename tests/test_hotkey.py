@@ -123,3 +123,24 @@ def test_filter_errors_never_escape(alt_filter):
 def test_key_vk():
     assert key_vk(Key.alt_l) == 0xA4
     assert key_vk(Key.ctrl_l) == 0xA2
+
+
+def test_every_accepted_key_name_is_what_the_hook_delivers():
+    """pynput's Windows hook reports left/right variants (Key.ctrl_l, Key.alt_l, Key.alt_gr for
+    the right Alt), never the generic Key.ctrl (0x11) / Key.alt (0x12); a name that parse_key
+    accepts but the hook never delivers is a hotkey that silently does nothing."""
+    from pynput.keyboard import Listener
+    delivered = Listener._SPECIAL_KEYS
+    for name in Key.__members__:
+        try:
+            key = parse_key(name)
+        except ValueError:
+            continue
+        assert delivered.get(key_vk(key)) == key, name
+
+
+def test_generic_modifier_names_are_rejected_with_a_hint():
+    for name, hint in (("ctrl", "ctrl_l"), ("alt", "alt_l")):
+        with pytest.raises(ValueError, match=hint):
+            parse_key(name)
+    assert parse_key("alt_r") == Key.alt_gr # what the hook reports for VK 0xA5

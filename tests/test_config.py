@@ -154,3 +154,12 @@ def test_unload_after_min(tmp_path, value, ok):
     else:
         with pytest.raises(ConfigError, match="unload_after_min"):
             load_config(path)
+
+
+def test_generic_modifier_key_names_are_rejected(tmp_path):
+    path = tmp_path / "config.toml"
+    for section, name in (("hotkey", "key"), ("hotkey", "cancel_key"), ("translation", "key")):
+        for value in ("ctrl", "alt"):
+            path.write_text(f'[{section}]\n{name} = "{value}"\n', encoding="utf-8")
+            with pytest.raises(ConfigError, match=f"{name}.*{value}_l"):
+                load_config(path)

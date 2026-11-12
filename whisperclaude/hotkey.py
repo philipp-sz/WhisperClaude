@@ -67,8 +67,21 @@ class TapDetector:
         return not self._interrupted and held <= self.max_hold
 
 
+GENERIC_MODIFIERS = {"ctrl", "alt"} # VK 0x11 / 0x12: the hook only sends the _l / _r variants
+
+
 def parse_key(name: str) -> Key | KeyCode:
-    """Config name -> pynput key: 'ctrl_l', 'ctrl_r', 'f9', 'pause', ... or a single character."""
+    """Config name -> pynput key: 'ctrl_l', 'ctrl_r', 'f9', 'pause', ... or a single character.
+
+    The low-level hook reports the left/right variants only (Key.ctrl_l, Key.alt_l, ...), so the
+    generic 'ctrl' and 'alt' would never match anything: rejected with a hint, not guessed
+    (which side did the user mean?). 'alt_r' is what pynput reports as Key.alt_gr (same VK 0xA5).
+    """
+    if name in GENERIC_MODIFIERS:
+        raise ValueError(f"{name!r} is ambiguous, say which one: "
+                         f"'{name}_l' (left) or '{name}_r' (right)")
+    if name == "alt_r":
+        return Key.alt_gr
     if name in Key.__members__:
         return Key[name]
     if len(name) == 1:

@@ -41,7 +41,7 @@ _SENTENCE_END = re.compile(
 _LAST_WORD = re.compile(r"(\S+)\.[\"'”’“»«›)\]]*$")
 ABBREVIATIONS = {"dr", "mr", "mrs", "ms", "prof", "st", "ca", "bzw", "usw", "vs", "nr", "hr",
                  "fr", "jr", "sr", "inc", "ltd", "no", "vgl", "evtl", "ggf"}
-_LINE = re.compile(r"^(\s*(?:[-*•]\s+|\d+[.)]\s+|>\s*)?)(.*?)(\s*)$")
+_PREFIX = re.compile(r"\s*(?:[-*•]\s+|\d+[.)]\s+|>\s*)?")
 
 
 def _is_abbreviation(piece: str) -> bool:
@@ -72,7 +72,11 @@ def segment(text: str) -> list[tuple[str, list[str], str]]:
     ("- ", "1. ", "> "), kept untranslated, like empty lines."""
     rows = []
     for line in text.split("\n"):
-        prefix, body, suffix = _LINE.match(line).groups()
+        # Not one regex with a lazy (.*?)(\s*)$: quadratic on a long whitespace run inside the line.
+        end = _PREFIX.match(line).end()
+        prefix, rest = line[:end], line[end:]
+        body = rest.rstrip()
+        suffix = rest[len(body):]
         rows.append((prefix, split_sentences(body), suffix))
     return rows
 
