@@ -37,6 +37,14 @@ MODELS = { # config name -> pre-converted CTranslate2 model (int8) on Hugging Fa
 LOW_VRAM_MB = 2048 # "auto" on CUDA with less free VRAM (after Whisper): the smaller model
 MIN_DETECT_CHARS = 25 # shorter sentences take the language of the whole text
 MIN_CONFIDENCE = 0.9
+# Inputs of at most SHORT_WORDS words ("Ja", "Einstellungen"): NLLB often adds words ("Yes, I did.")
+# or picks a wrong sense. Beam SHORT_BEAM, SHORT_HYPOTHESES candidates; each extra word beyond the
+# source's word count costs SHORT_WORD_PENALTY of the length-normalised log-probability
+# (scripts/short-mt experiment, 192 invented inputs: right 71 % -> 78 %, added words 16 -> 7).
+SHORT_WORDS = 3
+SHORT_BEAM = 6
+SHORT_HYPOTHESES = 6
+SHORT_WORD_PENALTY = 0.1
 
 # A sentence ends after . ! ? … (plus closing quotes/brackets) and a space before a capital
 # letter, digit or opening quote (no split in "e.g. this"), or after 。！？.
@@ -88,6 +96,15 @@ def segment(text: str) -> list[tuple[str, list[str], str]]:
 _SPACE_BEFORE = re.compile(r"(?<=\S) +([,.](?!\d)|[!?;:](?!\S))")
 _SPACE_BEFORE_FR = re.compile(r"(?<=\S) +([,.](?!\d))") # French keeps "Merci !"
 _CONTRACTION = re.compile(r"(?<=\w) '(s|re|ll|ve|m|d)\b|(?<=n) '(t)\b|(?<=\w) (n't)\b")
+
+
+def pick_short(source: str, hypotheses: list[str], scores: list[float]) -> int:
+    """Index of the best candidate for a very short input: score minus a penalty per word the
+    translation has beyond the source's word count (ties keep the earlier, i.e. the model's rank)."""
+    words = max(1, len(source.split()))
+    adjusted = [score - SHORT_WORD_PENALTY * max(0, len(hyp.split()) - words)
+                for hyp, score in zip(hypotheses, scores)]
+    return max(range(len(adjusted)), key=lambda i: (adjusted[i], -i))
 
 
 def tidy(source: str, text: str, target: str) -> str:
@@ -418,12 +435,18 @@ class Translator:
         out = list(sentences)
         if todo:
             batch = [self._tokens(sentences[i], sources[i]) for i in todo]
+            short = len(todo) == 1 and len(text.split()) <= SHORT_WORDS
             with self._lazy.use() as model: # waits for a running load, blocks an unload
                 results = model.translate_batch(
-                    batch, target_prefix=[[target]] * len(batch), beam_size=self.beam_size,
-                    max_decoding_length=min(512, 2 * max(map(len, batch)) + 10))
+                    batch, target_prefix=[[target]] * len(batch),
+                    beam_size=max(self.beam_size, SHORT_BEAM) if short else self.beam_size,
+                    max_decoding_length=min(512, 2 * max(map(len, batch)) + 10),
+                    **({"num_hypotheses": SHORT_HYPOTHESES, "return_scores": True} if short else {}))
             for i, r in zip(todo, results):
-                out[i] = tidy(sentences[i], self._decode(r.hypotheses[0]), target)
+                best = 0
+                if short:
+                    best = pick_short(text, [self._decode(h) for h in r.hypotheses], r.scores)
+                out[i] = tidy(sentences[i], self._decode(r.hypotheses[best]), target)
         it = iter(out)
         joiner = "" if target in ("jpn_Jpan", "zho_Hans", "zho_Hant", "yue_Hant") else " "
         return "\n".join(prefix + joiner.join(next(it) for _ in line) + suffix
