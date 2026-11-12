@@ -48,7 +48,7 @@ from whisperclaude.languages import LANGUAGES
 from whisperclaude.overlay import KEPT_S, Overlay, enable_dpi_awareness
 from whisperclaude.picker import LanguagePicker
 from whisperclaude.recorder import Recorder, load_sounddevice
-from whisperclaude.system import MIN_RAM_GB, gpu_present, total_ram_gb
+from whisperclaude.system import MIN_RAM_GB, foreground_window, gpu_present, total_ram_gb
 from whisperclaude.translation import RecentLanguages, Translation
 from whisperclaude.tray import Tray
 # whisperclaude.transcriber and .translator are imported by the loader thread (deferred imports
@@ -309,7 +309,8 @@ class Session:
                        stop_after_silence_s=cfg.recording.stop_after_silence_s,
                        remember=self.remember, on_pasted=self.on_pasted, on_kept=self.on_kept,
                        translation=self.translation,
-                       reload=lambda: create_from_config(self.cfg.model))
+                       reload=lambda: create_from_config(self.cfg.model),
+                       foreground=foreground_window)
         self.app.handlers = {
             LOADED: self.on_loaded,
             RELOADED: self.on_reloaded,

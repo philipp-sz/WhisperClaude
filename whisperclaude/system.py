@@ -138,3 +138,8 @@ def gpu_present(kind: str, timeout_s: float = 60.0) -> bool:
     except Exception:
         log.info("GPU check (%s) failed", kind, exc_info=True)
         return False
+
+
+def foreground_window() -> int:
+    """Handle of the window that has the keyboard focus (0 if none, e.g. during a switch)."""
+    return int(ctypes.windll.user32.GetForegroundWindow() or 0)
