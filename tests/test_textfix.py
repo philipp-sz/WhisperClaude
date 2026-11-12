@@ -1,6 +1,6 @@
 import pytest
 
-from whisperclaude.textfix import fix_pronoun_i, join_chunks
+from whisperclaude.textfix import fix_article_a, fix_model_de, fix_pronoun_i, join_chunks
 
 
 @pytest.mark.parametrize("chunks, expected", [
@@ -40,3 +40,35 @@ def test_join_chunks(chunks, expected):
 ])
 def test_fix_pronoun_i(text, expected):
     assert fix_pronoun_i(text) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Ein Speech to Text Model. Aber", "Ein Speech to Text Modell. Aber"),
+    ("mehr als ein Chatmodel für einfache Fragen sind sie", "mehr als ein Chatmodell für einfache Fragen sind sie"),
+    ("Das Speech-to-Text-Model, das wir nehmen", "Das Speech-to-Text-Modell, das wir nehmen"),
+    # English sentences keep "model"
+    ("the model is fast and it works.", "the model is fast and it works."),
+    ("I use a Model for that. It is good.", "I use a Model for that. It is good."),
+    ("Chatmodels are cool", "Chatmodels are cool"),
+    ("Mein Model ist gut", "Mein Modell ist gut"),
+])
+def test_fix_model_de(text, expected):
+    assert fix_model_de(text) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("a app that", "an app that"),
+    ("A idea", "An idea"),
+    ("a hour later", "an hour later"),
+    ("an honest try", "an honest try"),
+    # consonant sound or capitalized: untouched
+    ("a user", "a user"),
+    ("a one-time fee", "a one-time fee"),
+    ("a European bank", "a European bank"),
+    ("a Windows machine", "a Windows machine"),
+    ("a couple of times", "a couple of times"),
+    ("an alternative", "an alternative"),
+    ("a I x", "a I x"),
+])
+def test_fix_article_a(text, expected):
+    assert fix_article_a(text) == expected
