@@ -145,3 +145,51 @@ def test_kept_dictation_is_marked_in_the_menu(tmp_path):
     tray, history, _ = make_tray(tmp_path)
     history.add("halber Satz", note="cancelled")
     assert str(tray._recent_items()[1].text).endswith(" · cancelled")
+
+
+def test_quit_dialog_does_not_hold_the_tray_thread(tmp_path):
+    """The dialog must not run its modal loop on the tray thread (a blocked tray callback would
+    freeze it: Yes/No do nothing). The click returns while the dialog is still open, a second
+    click opens no second dialog, and the answer still quits."""
+    import threading
+    import time
+
+    release, shown, quits = threading.Event(), [], []
+    dialog_thread = []
+
+    def confirm():
+        shown.append(1)
+        dialog_thread.append(threading.current_thread())
+        return release.wait(5) # the user has not answered yet
+
+    tray = Tray(lambda: quits.append(1), lambda: None, Path("log"), Path("cfg"), confirm=confirm)
+    _ALIVE.append(tray)
+    quit_item = next(i for i in tray.icon.menu.items if str(i.text) == "Quit WhisperClaude")
+    start = time.monotonic()
+    quit_item(tray.icon)
+    assert time.monotonic() - start < 2 # returned although the dialog is open
+    quit_item(tray.icon) # a second click while the dialog is open
+    assert len(shown) == 1 and not quits
+    assert dialog_thread[0] is not threading.current_thread()
+    release.set()
+    dialog_thread[0].join(2)
+    assert quits == [1]
+
+
+def test_quit_dialog_failure_cancels_and_can_be_asked_again(tmp_path):
+    answers = iter([RuntimeError("no dialog"), True])
+
+    def confirm():
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    quits = []
+    tray = Tray(lambda: quits.append(1), lambda: None, Path("log"), Path("cfg"), confirm=confirm)
+    _ALIVE.append(tray)
+    quit_item = next(i for i in tray.icon.menu.items if str(i.text) == "Quit WhisperClaude")
+    quit_item(tray.icon)
+    assert not quits # failed dialog: no quit
+    quit_item(tray.icon)
+    assert quits == [1] # and the lock was released
