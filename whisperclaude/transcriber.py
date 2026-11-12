@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 import zlib
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -178,6 +179,8 @@ class LiveTranscription:
         self._languages: dict = {} # detected once per segment, not on every feed
         self._done = 0 # samples already transcribed
         self._texts: list[str] = []
+        self.tail_s = 0.0 # finish(): time for the chunks it still had to transcribe
+        self.tail_chunks = 0 # finish(): how many chunks those were
 
     def _groups(self, tail: np.ndarray, until: int | None = None,
                 segments: list[dict] | None = None) -> list[list[dict]]:
@@ -223,11 +226,14 @@ class LiveTranscription:
         return bool(get_speech_timestamps(np.asarray(audio, dtype=np.float32), VadOptions()))
 
     def finish(self, audio: np.ndarray) -> str:
-        """Transcribe what feed() hasn't and return the whole text."""
+        """Transcribe what feed() hasn't and return the whole text. Sets tail_s and
+        tail_chunks (grouping included)."""
+        t0 = time.perf_counter()
         tail = np.asarray(audio[self._done:], dtype=np.float32)
         rest = [_join(tail, g) for g in self._groups(tail)]
         if rest:
             self._texts.append(self._transcribe_chunks(rest))
+        self.tail_s, self.tail_chunks = time.perf_counter() - t0, len(rest)
         return join_chunks(self._texts)
 
 

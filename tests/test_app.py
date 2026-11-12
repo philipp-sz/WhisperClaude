@@ -352,6 +352,30 @@ def test_failing_live_feed_still_finishes_at_the_stop(monkeypatch):
     assert pasted == ["live text"] and live.feeds == 1 # feeding stopped after the error
 
 
+def test_log_lines_report_the_timings(monkeypatch, caplog):
+    monkeypatch.setattr(app_module, "LIVE_FEED_S", 0.01)
+
+    class SlowStop(SnapshotRecorder):
+        def stop(self):
+            time.sleep(0.05)
+            return super().stop()
+
+    class TimedLive(FakeLive):
+        tail_s, tail_chunks = 0.5, 2
+
+    app = App(SlowStop(), LiveTranscriber(TimedLive()), [].append)
+    with caplog.at_level("INFO", logger="whisperclaude.app"):
+        begin(app)
+        app.handle(TOGGLE)
+        finish(app)
+    started = next(m for m in caplog.messages if m.startswith("recording started, first audio"))
+    assert 0 <= float(started.split("audio ")[1].split(" s ")[0]) < 5
+    stopped = next(m for m in caplog.messages if m.startswith("transcribed "))
+    assert "after the stop (" in stopped and "while recording); stop tap to worker" in stopped
+    assert "recorder.stop 0.0" in stopped and "waited " in stopped and "for the live feeder" in stopped
+    assert "tail 0.50 s in 2 chunks" in stopped
+
+
 def test_failing_recorder_stop_returns_to_idle():
     class BrokenStop(FakeRecorder):
         def stop(self):
