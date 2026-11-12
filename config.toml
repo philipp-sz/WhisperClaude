@@ -80,6 +80,18 @@ my_languages = []
 [paste]
 restore_delay_s = 0.3 # wait before restoring your old clipboard (raise if an app pastes the old text)
 
+[insert]
+# Adapt the pasted text to what is in front of the caret. The app reads the character before the
+# caret (Windows UI Automation: Notepad, browsers, VS Code, Windows Terminal, ...; never stored
+# or logged). For apps that don't tell, it remembers the last paste: same window and no key or
+# click since = the caret still is behind the last dictation.
+smart_spacing = true  # a space in front of the text unless the caret is at a start, after a space,
+                      # a line break or an opening bracket (a second dictation no longer sticks to
+                      # the first: "works.Next"). false = paste the text as it is.
+adapt_case = false    # also lowercase the first word when the sentence goes on (after "and " or a
+                      # comma), but only function words (the, und, dass, ...), never nouns or
+                      # names. Off: it guesses wrong at unusual sentence ends (titles, lists).
+
 [commands]
 # Spoken formatting: say the trigger word followed by a command and it is replaced by the
 # formatting, in any language you dictate in:
