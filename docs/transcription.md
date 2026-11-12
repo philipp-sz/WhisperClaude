@@ -109,6 +109,8 @@ Three real dictations with pauses (German 63 s, English 60 s, mixed 33 s), faste
 
 Whisper was trained on subtitles. With timestamps it splits text at pauses and capitalizes each line. A punctuated bilingual prompt ("Hallo, das ist ein Test. Okay, so let's see how this works…") sets the punctuation style and keeps mixed audio from being translated. A custom vocabulary is appended to the prompt. Faster-whisper's `hotwords` fixed the same words but dropped commas.
 
+Beam search on the iGPU (2026-11-12): OpenVINO GenAI 2026.4 refuses `num_beams > 1` on the GPU ("Not Implemented") and `num_return_sequences > 1`. Optimum Intel (`OVModelForSpeechSeq2Seq`, Hugging Face's own `generate()` on the same OpenVINO model) does run beam search on the iGPU: on the author's 24 recordings 131 errors greedy (app), 127 with 2 beams, 122 with 4 (−7%, fewer deletions and insertions, names and sound-alikes unchanged), but 2.7 times slower per chunk and with torch and transformers (1.4 GB) as dependencies. Not adopted. Details in [real-recordings.md](real-recordings.md#fourth-round-experiments-and-decisions-2026-11-12).
+
 ## Chunking and quality
 
 Corpus: 13 texts read by the author (about 25 s each; German, English, mixed, German with anglicisms), plus five long dictations joined from them with 2–3.5 s pauses and an extra 2.5 s pause in the middle of a sentence. `scripts/eval_quality.py` measures word error rate (WER), case errors, time and GPU time.
@@ -122,6 +124,8 @@ Corpus: 13 texts read by the author (about 25 s each; German, English, mixed, Ge
 ## Live transcription
 
 Every 5 s while recording, the audio so far is passed to the VAD. A chunk is transcribed once a later chunk has started and the chunk ends more than 5 s before the newest audio. On a 313 s clip, the time from the stop tap to the text fell from 8–13 s to 0.9 s on the iGPU and from 28 s to 6.6 s on the CPU. With language-aware grouping, a 5-minute dictation is pasted 1.3–2.4 s after the stop tap.
+
+Language detection after the stop (2026-11-12): from about 30 s on, detecting each segment's language took 27–30% of the time from the stop tap to the text, because a segment was only detected when it was compared with a following one, so the last ended segment always waited for the stop. Detecting every ended segment during the dictation cut the stop time by 6–12% for 30 s and 90 s dictations, with identical text on all 24 recordings. OpenVINO GPU properties (`PERFORMANCE_HINT: LATENCY`, `GPU_HOST_TASK_PRIORITY`, `GPU_QUEUE_PRIORITY`, `NUM_STREAMS`) changed the time by 2–10%, within the noise; not adopted.
 
 ## Qwen3-ASR
 

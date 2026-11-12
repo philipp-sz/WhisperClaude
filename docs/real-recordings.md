@@ -255,3 +255,35 @@ Options, not built:
 1. **N-best rescoring by a small local LLM**: Whisper produces several candidate texts per chunk and the LLM only picks the most plausible one, so it cannot invent, translate or rephrase (the failures of the rejected cleanup). On the iGPU the candidates would have to come from sampling (no beam search there). First measure the ceiling: how often the right word is among the candidates at all.
 2. **`large-v3`** (32 decoder layers): never measured on these recordings (only on FLEURS and the 13-clip corpus, where it was not better than turbo on the author's voice). It is the default on the NVIDIA desktop, so measure it there with `scripts/real_eval.py run whisper` (sound-alikes counted separately).
 3. **Personal language model** (Sprout trained on the author's writing, fused into a CTC/TDT decoder): the most work.
+
+## Fourth round: experiments and decisions (2026-11-12)
+
+Run as parallel subagent experiments (how they were run and which model suited which task is general knowledge and kept outside this project). All measurements on the laptop's iGPU unless noted; timings were noisy because experiments shared the GPU, so variants were interleaved.
+
+### Built (committed 2026-11-12)
+
+| Change | Measured |
+|---|---|
+| Translation model on demand, unloaded after `[translation] unload_after_min` (10) idle minutes; "Loading translation model…" on the pill while it loads | idle: about 1.3 GB less working set and about 5 GB less committed memory; the first translation after an idle spell takes 1.5–2.5 s longer |
+| Language of ended segments detected while recording | stop-to-text 6–12% faster for 30 s and 90 s dictations; identical text on all 24 recordings (147 errors on the live path before and after) |
+| Microphone opened on a worker thread; "Starting…" until the first audio block, then the red pill | see "Microphone start" below |
+| Microphone closed in the background after a synchronous stop; sounddevice imported on the loader thread | about 70 ms less per dictation; UI about 170 ms earlier at startup |
+| Duplicate autostart/revive launches exit before the heavy imports | 0.63 → 0.13 s per duplicate (261 duplicates against 42 real starts in the log) |
+| Wave pill: top half computed and mirrored | 1.5 times faster per frame, pixel-identical |
+| Casing and sentence-break counts in `real_eval.py` | turbo: 63 casing and 42 break differences on 3,154 words (not counted as errors) |
+| Test suite: no sleeps for recording ids, one shared language identifier | 17 s → 7–9 s |
+| Automatic vocabulary removed (author: most users don't have such folders and may not want them read; building it from past dictations would only repeat Whisper's own spellings) | the manual `vocabulary` list stays |
+
+### Microphone start
+
+The first word can be lost when the user speaks right at the tap. Opening the stream (MME, the app's default) took 300–430 ms when the microphone had been idle for more than a few seconds, up to about 0.7 s under CPU load; a follow-up within about 2 s took 40–80 ms. WASAPI, DirectSound and low-latency settings were all as slow when cold (the cost is Windows' audio engine waking up) and gain at most 20 ms. Every stream starts with about 20 ms of near-silence and a click. Fix built: the red pill only appears once audio flows ("Starting…" before), so the user knows when to speak. **Decided by the author: the microphone is not kept open after the stop tap** (it would only help quick follow-ups and keep the mic indicator on); an always-open microphone with a pre-roll buffer is out for privacy.
+
+### Measured, not built
+
+- **N-best ceiling** (option 1 of "Sound-alike errors"): the iGPU pipeline returns one sequence per call, so N candidates need N full decodes (sampling, a different seed each). With 8 samples per chunk at temperature 0.4 the best possible pick (oracle, fitted to the reference) gives 131 → 93 errors; one extra sample already gives 9 of that by chance. Only 19 of 65 substitutions get fixed, the main sound-alikes ("was"/"dass", "cloud"/"Claude") not. A pick without an LLM (the candidate closest to the others) gave −2 to −9. Cost: 8 times the GPU time. **Rejected.**
+- **Beam search via Optimum Intel**: works on the iGPU; 122 errors with 4 beams against 131 greedy, 2.7 times slower, 1.4 GB of extra dependencies. **Rejected** (see [transcription.md](transcription.md#decoding)).
+- **OpenVINO GPU properties**: within the noise. **Not adopted.**
+- **Pin the paste target** (backlog item 6): built and tested (no paste if the window changed during transcription), **not kept by the author**.
+- **Spoken e-mail addresses** (backlog item 9): a rule for German and English words ("max punkt muster at gmail punkt com" → "max.muster@gmail.com") was built and passed a hidden test set, but **not kept**: never tested on real dictated addresses, and only German and English words. Next step if revived: record 10–15 dictated addresses first.
+- **Deterministic text fixes for the remaining errors**: none worth building; the remaining errors depend on context (sound-alikes, colloquial forms the author really said, names). About 15 counted errors are scoring questions (compound spacing such as "drauf gekommen", "x Quadrat" against "x²"); undecided.
+- **Animation cost**: the tray icon is practically free (cached frames); fewer frames per second for the waves would save more but needs an eye test.

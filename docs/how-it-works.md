@@ -18,7 +18,7 @@ flowchart LR
 
 ## Startup and backends
 
-The hotkey, tray icon and status pill start first. The models load in the background, so a tap during loading gets a "still loading" hint instead of being lost.
+The hotkey, tray icon and status pill start first. The models load in the background, so a tap during loading gets a "still loading" hint instead of being lost. The logon and wake tasks often start the app while it already runs; such a duplicate checks the single-instance lock before loading any library and exits in 0.13 s (0.6 s before).
 
 The app then selects the Whisper backend:
 
@@ -34,7 +34,7 @@ The reasons for each choice are in [transcription.md](transcription.md).
 
 ## Chunking
 
-Voice activity detection (Silero, through faster-whisper) cuts the audio at pauses, so no chunk crosses Whisper's 30 s window. Silero rates every 32 ms window with a speech probability; speech starts above 0.5 and ends after 2 s below 0.35, and every segment is padded by 0.4 s. Its probabilities depend on the level, so quiet audio is amplified for the VAD only (to −26 dBFS, at most +20 dB; the model gets the original audio): a quiet recording had lost whole passages. Whisper detects one language per chunk. On the GPU paths, segments are therefore merged only if their detected language matches. Otherwise Whisper would translate the second language into the first. Each chunk starts with 0.5 s of silence, which keeps Whisper from skipping the first words. A punctuated example sentence in the dictation languages plus the custom vocabulary is passed as the prompt. It sets the punctuation style and the spelling of names. The vocabulary is the manual list in `config.toml`; prompt and vocabulary together must stay within Whisper's 223 prompt tokens.
+Voice activity detection (Silero, through faster-whisper) cuts the audio at pauses, so no chunk crosses Whisper's 30 s window. Silero rates every 32 ms window with a speech probability; speech starts above 0.5 and ends after 2 s below 0.35, and every segment is padded by 0.4 s. Its probabilities depend on the level, so quiet audio is amplified for the VAD only (to −26 dBFS, at most +20 dB; the model gets the original audio): a quiet recording had lost whole passages. Whisper detects one language per chunk. On the GPU paths, segments are therefore merged only if their detected language matches. Otherwise Whisper would translate the second language into the first. Each detection is a full encoder pass (about 270 ms on the iGPU), so during a dictation every segment is detected as soon as it has ended (2.5 s later), not after the stop tap; a dictation with a single segment needs none. Each chunk starts with 0.5 s of silence, which keeps Whisper from skipping the first words. A punctuated example sentence in the dictation languages plus the custom vocabulary is passed as the prompt. It sets the punctuation style and the spelling of names. The vocabulary is the manual list in `config.toml`; prompt and vocabulary together must stay within Whisper's 223 prompt tokens.
 
 Greedy decoding can fall into a loop ("x² dx dx dx ..."). A chunk whose text compresses more than 2.4 times with zlib (Whisper's own criterion; normal text: at most 1.9) or has more than 6 words per second is decoded again with a repetition penalty of 1.1 (beam search, which also found the text, is not implemented on the iGPU). If the retry loops too, the repeats are collapsed. On CUDA and the CPU, faster-whisper's own temperature fallback does this.
 
@@ -47,6 +47,8 @@ The translation model is NLLB-200, run through CTranslate2 (int8) on an NVIDIA G
 ## Keys
 
 A low-level keyboard hook watches for a tap of Left Ctrl alone. Ctrl+C, Ctrl+click and Ctrl+scroll are not taps. Neither are Ctrl events marked as injected by software: a precision-touchpad pinch reaches apps as Ctrl + wheel, and recordings had started by themselves while two fingers were on the touchpad. The translate key (Left Alt) is detected inside the hook: a tap's key-up is swallowed and replayed behind an unassigned key, so the focused app does not open its menu bar.
+
+A start tap opens the microphone on a worker thread. The pill shows "Starting…" until the first audio arrives and only then turns red: after an idle spell, Windows' audio engine needs 0.3–0.7 s before audio flows, and speech before the red pill is not recorded. At the stop tap the stream is stopped at once (so the end of the last word is kept) and closed in the background (70 ms less per dictation).
 
 ## Clipboard and history
 
@@ -72,6 +74,6 @@ While idle, the app uses no GPU time and 0.07% of one CPU core on the CPU backen
 
 ## Backend limitations
 
-- The NPU is not used, because OpenVINO 2026.4's Whisper pipeline crashes on it.
+- The NPU is not used: OpenVINO 2026.4 runs Whisper there only without a prompt, and then it translated German recordings into English (see above).
 - The CPU path merges chunks without language detection, so mixed German and English can come out in one language.
 - On Intel hardware the translation runs on the CPU.

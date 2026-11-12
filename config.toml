@@ -1,5 +1,5 @@
 # WhisperClaude settings. Every key is optional (missing = default shown here).
-# Changes apply after a restart: tray icon -> "Restart (apply config)".
+# Changes apply after a restart: tray icon -> "Restart to apply settings".
 
 [hotkey]
 key = "ctrl_l"        # tap alone to start/stop: "ctrl_l", "ctrl_r", "f9", "pause", ...
