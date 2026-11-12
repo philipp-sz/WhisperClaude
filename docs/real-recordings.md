@@ -155,7 +155,7 @@ Two research notes made with Claude (an overview of open-source dictation tools,
 | 3 | **Scale the VAD input to a fixed level** (VAD only, the model keeps the original audio) | −27% errors on the quiet and paused recordings | small | whole set + FLEURS before/after |
 | 4 | Diagnose the phantom recording start: log each start with injected flag and hold time (no content); then decide whether to ignore injected Ctrl events | Reported several times, cause unknown | small | the log after the next occurrence |
 | 5 | NPU as the fallback before the CPU: Granite works today; Whisper turbo needs the language set per chunk (the NPU pipeline has no prompt) | Keeps turbo-class quality when the GPU is gone, at low power; no Windows dictation app does it yet | medium | the set on the NPU against the CPU run |
-| 6 | Pin the paste target to the window where recording started (or don't paste and say so if the focus moved) | Text could land in the wrong app, worse with slow fallbacks | small | manual test |
+| 6 | Pin the paste target to the window where recording started (or don't paste and say so if the focus moved) | Text could land in the wrong app, worse with slow fallbacks | small | manual test (done 2026-11-12: kept with Copy when the window changed) |
 | 7 | Vocabulary review: "cloud" is in the list next to "Claude"; add terms the author uses (Bijektion, Hoare, …) | Names are turbo's main error type besides misheard words | trivial | real_eval before/after |
 | 8 | Pill preview of finished chunks while recording | Answers the "word by word" wish partly; the texts already exist | medium | — |
 | 9 | Spoken e-mails and paths (`commands.py`-style rules) | Failed in every engine | medium | dedicated recordings |
@@ -307,7 +307,7 @@ Again parallel subagent experiments; at most one used the iGPU at a time.
 
 - **Prompt sentence** (15 variants, 24 recordings + corpus; FLEURS not cached): keep the current prompt. The best variant (English sentence first) gave 124 against 131 errors, within the noise: the same recordings at 0.8× gain gave 188 errors for the current prompt. The big effects are language flips: a prompt that leans German translated English chunks into German (+40 to +56 errors per recording), one that leans English translated German recordings (609 errors). Only short, balanced German + English prompts are safe. Idea: force each chunk's detected language, which would make the prompt far less fragile.
 - **Translation speed** (NLLB-1.3B on the CPU): nothing to gain, see [translation.md](translation.md#call-settings-2026-11-12).
-- **Short translation inputs** (192 invented 1–4 word inputs): 71% correct, 8% with added words ("Ja" → "Yes, I did."), 21% wrong meaning ("Einstellungen" → "Employment", "Speichern" → "Storage"). The wrong meanings are the larger problem; fixes (length caps, n-best, wrapping, NLLB-600M) are prepared but not run.
+- **Short translation inputs** (192 invented 1–4 word inputs): 71% correct, 8% with added words ("Ja" → "Yes, I did."), 21% wrong meaning ("Einstellungen" → "Employment", "Speichern" → "Storage"). The wrong meanings are the larger problem; n-best with a length penalty was adopted in the sixth round ([translation.md](translation.md#short-inputs-2026-11-12)).
 - **Live text preview** above the pill (finished chunks while recording): built and working, **not kept by the author**.
 
 ## Sixth round: experiments and decisions (2026-11-12 night)
@@ -327,6 +327,11 @@ Again parallel subagent experiments; at most one used the iGPU at a time.
 ### Built, not kept by the author
 
 Math-variable guard for "i" (2 cases), vocabulary term variants and "cloud code" -> "Claude Code" (21 fixes, not wired in), record while the model loads, per-app profiles, quiet-microphone hint, auto Enter after the paste, German spoken commands ("Befehl ..."), paragraph breaks between pieces, the "carrier" sentence for short translation inputs (isolated 1-4 word inputs: 57 -> about 148 of 192 correct, but mixed inside dictations and about 2x slower).
+
+### Last runs (Sonnet/Opus, 2026-11-12 night)
+
+- Built and committed: the "a" -> "an" rule skips non-English sentences ("voy a escribir") and labels ("plan a or plan b"); a failed paste offers Copy; the timing log line can no longer turn a finished transcript into an error; a dictation or translation is kept instead of pasted when another window came to the front meanwhile ([interface.md](interface.md#clipboard-and-history)); n-best for short translations ([translation.md](translation.md#short-inputs-2026-11-12)).
+- Rejected: more silence before (1.0 s) or after (0.5 s) each chunk: 128 / 131 / 132 errors, within the noise of one run (about ±3). Further text rules: no candidate fixes 3 errors without breaking one; the rest are sound-alikes and the author's own terms, misheard differently each time.
 
 ### Measured, rejected
 

@@ -72,3 +72,15 @@ Measured on the laptop CPU (NLLB-1.3B, int8, MKL as the app runs it here, 4 thre
 | Reload on the key tap + translation | 4.5 s | 1.55 GB | 5.6 GB |
 
 The load takes about 3.2 s. Picking a language takes 1-2 s, so after an idle unload the user waits about 1.5-2.5 s longer for the first translation than before, and nothing longer afterwards. In return the app idles 1.3 GB (working set) and 5.1 GB (commit) lighter. The new startup is also 2 s faster than the old sequential one (4.7-5.4 s), because the tokenizer and the detector no longer wait for the model.
+
+## Short inputs (2026-11-12)
+
+When the whole input is one sentence of at most 3 words, the translator asks for 6 candidates (beam 6) and subtracts 0.1 from each candidate's score per word beyond the source's word count (`pick_short`, `SHORT_*` in `translator.py`). NLLB was trained on sentences and pads short inputs ("Yes" -> "Ja, das ist es."); the right short translation is usually among the candidates, just ranked a little lower.
+
+| Test | Result |
+|---|---|
+| 192 invented 1-4 word inputs (tuning set) | correct 136 -> 151, added words 16 -> 7, wrong sense 40 -> 34; held-out halves +3 to +8 correct |
+| 65 new short inputs + 10 edge cases (de/en/fr/es, judged by hand) | 26 of 80 outputs changed: 13 better (e.g. "Kühlschrank": "Refrigerators and refrigerating containers" -> "Refrigerator"; a URL no longer becomes an invented sentence), 2 worse ("Cancel" -> "Absagen" instead of "Abbrechen"), the rest equal; longer inputs identical; no crash on empty, emoji, URL or formula input |
+| Latency per short input (CPU) | median 137-165 ms -> 214-244 ms (about 1.5x) |
+
+Not fixed: wrong senses of UI words ("Einstellungen" -> "Employment", "Bearbeiten" -> "Treatment") and bare "Ja"/"Nein". The length penalty cannot tell two one-word senses apart; a small dictionary of UI words and interjections would be the next step. Rejected: round-trip back-translation scoring (a little better, 2.8x slower).

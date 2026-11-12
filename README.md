@@ -129,7 +129,7 @@ The slow transcription tests use two short recordings of the user's voice, made 
 - If another app holds the clipboard for more than a second, nothing is pasted. The dictation stays in "Recent dictations".
 - The first 0.2–0.4 s after the start tap can be lost while the microphone opens.
 - With the Intel iGPU backend, the app uses 6–9% of one CPU core while idle, because a thread in Intel's OpenCL runtime keeps running. The CPU backend uses 0.07%. See [docs](docs/transcription.md#idle-cpu-with-the-igpu-backend).
-- NLLB adds words to inputs of one or two words ("Ja" becomes "Yes, I did.").
+- Translations of one to three words can still add words or pick the wrong sense ("Einstellungen" becomes "Employment"); see [docs](docs/translation.md#short-inputs-2026-11-12).
 - While the app runs, a tap of Left Alt alone no longer opens an app's menu bar. `[translation] key` sets another key.
 - The NLLB-200 weights are licensed CC-BY-NC 4.0, which allows non-commercial use only.
 

@@ -32,6 +32,8 @@ Pasting needs the clipboard: the app puts the text there, sends Ctrl+V and resto
 | Esc while recording | "Cancelled" + Copy | cancelled |
 | No speech for 60 s (auto-stop) | "Stopped after 60 s of silence" + Copy | not pasted |
 | The language picker lost the focus | "Not pasted (the focus moved)" + Copy | not pasted |
+| Another window is in front than at the stop tap (dictation) or before translating (translation) | "Not pasted (the focus moved)" + Copy | not pasted |
+| The paste failed (clipboard locked by another app) | "Paste failed: …" + Copy | |
 | A dictation's translation failed | "Translation failed: …" + Copy (the original) | |
 
 Every dictation is saved to the history before it is pasted, so a paste into a window without a text field cannot lose it. A translated dictation or selection is one entry with both texts.
