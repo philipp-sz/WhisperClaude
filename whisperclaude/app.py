@@ -286,6 +286,7 @@ class App:
         on_kept: Callable[[str, str], None] | None = None, # (text, message): not pasted
         translation: TranslationLike | None = None, # None = translate key off
         reload: Callable[[], TranscriberLike] | None = None, # loads the model again (worker thread)
+        foreground: Callable[[], int] | None = None, # handle of the foreground window; None = no check
     ) -> None:
         """transcriber=None starts in LOADING; call set_transcriber() once it's ready.
 
@@ -297,6 +298,7 @@ class App:
         self.recorder = recorder
         self.transcriber = transcriber
         self.paste = paste
+        self.foreground = foreground
         self.events: queue.Queue = events if events is not None else WakeQueue()
         self.on_state = on_state or (lambda state, msg: None)
         self.postprocess = postprocess
@@ -463,6 +465,7 @@ class App:
         # the model may have been unloaded while the user picked: say so, the load takes seconds
         loading = not self.translation.model_ready()
         self.events.put((TRANSLATING, "Loading translation model…" if loading else None))
+        window = self._foreground() # the paste target; switching away while translating keeps it
         try:
             t0 = time.perf_counter()
             translated = self.translation.translate(text, target, source)
@@ -475,12 +478,25 @@ class App:
             else:
                 self.events.put((ERROR, f"translation failed: {e}"))
             return
+        if not keep and window and self._foreground() != window:
+            log.info("the focus moved while translating: keeping the translation")
+            keep = True
         # one entry with original and translation (a dictation's original is saved already)
         self._remember(text, translated, target, NOT_PASTED if keep else "", original_saved)
         if keep:
             self.events.put((KEPT, (translated, MOVED)))
         else:
             self._paste(translated, remember=False)
+
+    def _foreground(self) -> int:
+        """The foreground window's handle, 0 if unknown (no check configured, or it failed)."""
+        if self.foreground is None:
+            return 0
+        try:
+            return self.foreground()
+        except Exception:
+            log.warning("could not read the foreground window", exc_info=True)
+            return 0
 
     def _remember(self, text: str, translation: str = "", target: str = "", note: str = "",
                   update: bool = False) -> None:
@@ -502,7 +518,8 @@ class App:
             self.paste(text)
         except Exception as e: # clipboard can be locked by another app
             log.exception("paste failed")
-            self.events.put((ERROR, f"paste failed: {e}"))
+            # kept, not a bare error: the pill offers to copy it (it is in the history too)
+            self.events.put((KEPT, (text, f"Paste failed: {e}")))
             return
         log.info("pasted %d characters", len(text)) # privacy: never the text itself
         self.events.put((PASTED, text))
@@ -627,17 +644,20 @@ class App:
             self._set(State.IDLE, "Cancelled" if cancelled else "Too short")
             return
         self._set(State.TRANSCRIBING)
+        window = self._foreground() # the paste target; switching away meanwhile keeps the text
         job = None
         if translate: # pick the language while the worker transcribes
             job = self._job = _TranslateJob(dictation=True)
             self._show_picker(job)
-        threading.Thread(target=self._transcribe, args=(audio, live, auto, job, cancelled, stop),
+        threading.Thread(target=self._transcribe, args=(audio, live, auto, job, cancelled, stop, window),
                          daemon=True).start()
 
     def _transcribe(self, audio: np.ndarray, live: _LiveRun | None = None,
                     auto: bool = False, job: _TranslateJob | None = None,
-                    cancelled: bool = False, stop: _StopTiming | None = None) -> None:
-        """Worker thread: transcribe and paste (or keep, see App). Pasting here (not on the
+                    cancelled: bool = False, stop: _StopTiming | None = None,
+                    window: int = 0) -> None:
+        """Worker thread: transcribe and paste (or keep, see App). window: the foreground window
+        at the stop tap (0 = unknown); if another window is in front now, the text is kept. Pasting here (not on the
         Tk thread) keeps the main loop free, so the hotkey thread never waits on it. State
         stays TRANSCRIBING until pasted, so toggles can't interfere."""
         if stop is not None:
@@ -659,6 +679,9 @@ class App:
             self._translate_dictation(text, job)
         elif auto:
             self._keep(text, stopped, NOT_PASTED)
+        elif window and self._foreground() != window:
+            log.info("the focus moved while transcribing: keeping the dictation")
+            self._keep(text, MOVED, NOT_PASTED)
         else:
             self._paste(text)
 
@@ -670,6 +693,13 @@ class App:
             t0 = time.perf_counter()
             text = self._transcribe_retrying(audio, live)
             elapsed = time.perf_counter() - t0
+        except Exception as e:
+            log.exception("transcription failed")
+            if job is not None:
+                self.events.put((UNPICK, job))
+            self.events.put((ERROR, str(e)))
+            return None
+        try: # only a log line: a failure here must not turn the transcript into an error
             early = getattr(live.live, "done_s", 0.0) if live else 0.0
             # without live transcription the whole transcription is the "tail"
             join_s = live.join_s if live else 0.0
@@ -681,13 +711,9 @@ class App:
                      "feeder, tail %.2f s in %d chunks",
                      len(audio) / SAMPLE_RATE, elapsed, early, tap_to_worker_s, recorder_s,
                      join_s, tail_s, tail_chunks)
-            return text or ""
-        except Exception as e:
-            log.exception("transcription failed")
-            if job is not None:
-                self.events.put((UNPICK, job))
-            self.events.put((ERROR, str(e)))
-            return None
+        except Exception:
+            log.exception("could not log the transcription timings")
+        return text or ""
 
     def _transcribe_retrying(self, audio: np.ndarray, live: _LiveRun | None) -> str:
         """Finishes the live transcription or transcribes all of the audio; a failing model is

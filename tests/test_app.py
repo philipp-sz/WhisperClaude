@@ -784,6 +784,43 @@ def test_translated_selection_is_kept_when_the_focus_moved():
                                      "target": "fra_Latn", "note": "not pasted"})]
 
 
+def test_translation_is_kept_when_the_window_changes_while_translating():
+    t = FakeTranslation()
+    app, states, pasted, kept, saved = make_translate_app(t)
+    windows = iter([100, 200]) # before the translation, after it: the user switched windows
+    app.foreground = lambda: next(windows)
+    app.handle(app_module.TRANSLATE)
+    pump_until(app, lambda: t.picks)
+    t.answer("fra_Latn")
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert not pasted and kept == [("[fra_Latn] Hallo Welt", "Not pasted (the focus moved)")]
+    assert saved[-1][1]["note"] == "not pasted"
+
+
+def test_translation_is_pasted_when_the_window_stays():
+    t = FakeTranslation()
+    app, states, pasted, kept, saved = make_translate_app(t)
+    app.foreground = lambda: 100
+    app.handle(app_module.TRANSLATE)
+    pump_until(app, lambda: t.picks)
+    t.answer("fra_Latn")
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert pasted == ["[fra_Latn] Hallo Welt"] and not kept
+
+
+def test_unknown_foreground_window_does_not_block_the_paste():
+    t = FakeTranslation()
+    app, states, pasted, kept, saved = make_translate_app(t)
+    def broken():
+        raise OSError("no window station")
+    app.foreground = broken
+    app.handle(app_module.TRANSLATE)
+    pump_until(app, lambda: t.picks)
+    t.answer("fra_Latn")
+    pump_until(app, lambda: app.state is State.IDLE)
+    assert pasted == ["[fra_Latn] Hallo Welt"]
+
+
 def test_dictate_and_translate():
     t = FakeTranslation()
     app, states, pasted, kept, saved = make_translate_app(t)
@@ -948,3 +985,26 @@ def test_failed_reload_reports_the_error():
         raise RuntimeError("no model")
     app = App(FakeRecorder(), FailingTranscriber(), lambda text: None, reload=broken)
     assert app_module.ERROR in run_dictation(app)
+
+
+def test_dictation_is_kept_when_the_window_changes_while_transcribing():
+    pasted, kept, saved = [], [], []
+    app = App(FakeRecorder(), InstantTranscriber("hallo welt"), pasted.append,
+              on_kept=lambda text, msg: kept.append((text, msg)), remember=saver(saved))
+    windows = iter([100, 200]) # at the stop tap, before the paste: the user switched windows
+    app.foreground = lambda: next(windows)
+    begin(app)
+    app.handle(TOGGLE)
+    finish(app)
+    assert not pasted and kept == [("hallo welt", "Not pasted (the focus moved)")]
+    assert saved == [("hallo welt", {"note": "not pasted"})]
+
+
+def test_dictation_is_pasted_when_the_window_stays():
+    pasted = []
+    app = App(FakeRecorder(), InstantTranscriber("hallo welt"), pasted.append)
+    app.foreground = lambda: 100
+    begin(app)
+    app.handle(TOGGLE)
+    finish(app)
+    assert pasted == ["hallo welt"]
