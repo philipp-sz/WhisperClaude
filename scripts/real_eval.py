@@ -18,7 +18,8 @@ sys.path.insert(0, str(ROOT))
 from scripts import real_engines as engines # noqa: E402
 from scripts.real_data import REAL_DIR, Recording, evaluate, load_hyps, load_recordings, markup, read_wav # noqa: E402
 
-TABLE = f"{'engine':16s} {'recs':>4s} {'words':>6s} {'errors':>6s} {'WER':>6s} {'sub':>4s} {'del':>4s} {'ins':>4s} {'names':>9s} {'time/audio':>10s}"
+TABLE = (f"{'engine':16s} {'recs':>4s} {'words':>6s} {'errors':>6s} {'WER':>6s} {'sub':>4s} {'del':>4s} {'ins':>4s} "
+         f"{'case':>5s} {'brk':>4s} {'names':>9s} {'time/audio':>10s}") # case: wrong capitals, brk: wrong sentence breaks
 
 
 def with_reference(directory: Path = REAL_DIR) -> list[Recording]:
@@ -36,12 +37,14 @@ def summarize(name: str, recordings: list[Recording], directory: Path = REAL_DIR
     rows = [(r, evaluate(r.reference, hyps[r.id]["text"])) for r in recordings if r.id in hyps]
     if not rows:
         return None
-    total = {k: sum(e[k] for _, e in rows) for k in ("words", "errors", "sub", "del", "ins", "names", "names_wrong")}
+    total = {k: sum(e[k] for _, e in rows)
+             for k in ("words", "errors", "sub", "del", "ins", "casing", "breaks", "names", "names_wrong")}
     seconds = sum(hyps[r.id]["s"] for r, _ in rows)
     audio = sum(audio_seconds(r) for r, _ in rows)
     names = f"{total['names_wrong']}/{total['names']}"
     return (f"{name:16s} {len(rows):4d} {total['words']:6d} {total['errors']:6d} {100 * total['errors'] / max(total['words'], 1):5.1f}% "
-            f"{total['sub']:4d} {total['del']:4d} {total['ins']:4d} {names:>9s} {seconds / audio:9.2f}x")
+            f"{total['sub']:4d} {total['del']:4d} {total['ins']:4d} {total['casing']:5d} {total['breaks']:4d} "
+            f"{names:>9s} {seconds / audio:9.2f}x")
 
 
 def report(recordings: list[Recording], show: bool, directory: Path = REAL_DIR) -> None:

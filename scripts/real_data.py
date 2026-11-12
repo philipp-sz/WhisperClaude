@@ -44,10 +44,26 @@ class Recording:
         return self.wav.with_suffix(".json")
 
 
+_SENTENCE_END = r"[.!?]+[\"'”»)\]]*" # sentence-ending punctuation, optionally followed by closing quotes/brackets
+
+
+def _tokens(text: str) -> list[tuple[str, str, bool]]:
+    """Per word: (normalized word, original word, followed by a sentence end). Same normalization as words()."""
+    text = text.replace("-", " ").replace("’", "'")
+    raw = list(re.finditer(r"[\w']+", text))
+    out: list[tuple[str, str, bool]] = []
+    for k, m in enumerate(raw):
+        gap = text[m.end(): raw[k + 1].start() if k + 1 < len(raw) else len(text)]
+        ends = re.fullmatch(_SENTENCE_END + r"\s+", gap) or (k + 1 == len(raw) and re.fullmatch(_SENTENCE_END + r"\s*", gap))
+        pieces = [_NUMBERS.get(p, p) for p in re.findall(r"[\w']+", m.group(0).lower())]
+        for n, piece in enumerate(pieces): # lower-casing can split a word (e.g. "İ"); words() always did the same
+            out.append((piece, m.group(0), bool(ends) and n == len(pieces) - 1))
+    return out
+
+
 def words(text: str) -> list[str]:
     """Lower-case words without punctuation; number words as digits ("two" and "2" both count)."""
-    text = text.lower().replace("-", " ").replace("’", "'")
-    return [_NUMBERS.get(w, w) for w in re.findall(r"[\w']+", text)]
+    return [w for w, _, _ in _tokens(text)]
 
 
 def parse_reference(text: str) -> tuple[str, list[bool]]:
@@ -169,13 +185,31 @@ def _align(ref: list[str], hyp: list[str]) -> list[tuple[str, int, int]]:
 
 
 def evaluate(reference: str, hypothesis: str) -> dict:
-    """Errors of one hypothesis against a reference (which may mark names): counts by kind, name errors."""
+    """Errors of one hypothesis against a reference (which may mark names): counts by kind, name errors.
+
+    Also counts over the CORRECT words (matched after normalization, so they are not errors):
+    `casing` = matched words whose original capitalization differs (e.g. "Haus" vs "haus"); a word that starts a
+    sentence in the reference is skipped, since its capital comes from the sentence. `breaks` = matched words after
+    which exactly one side has a sentence end (. ! ? directly after the word, then a space or the end).
+    """
     clean, name_flags = parse_reference(reference)
-    ops = _align(words(clean), words(hypothesis))
+    ref, hyp = _tokens(clean), _tokens(hypothesis)
+    ops = _align([w for w, _, _ in ref], [w for w, _, _ in hyp])
     kinds = [op for op, _, _ in ops]
     wrong_names = sum(1 for op, i, _ in ops if i >= 0 and name_flags[i] and op != "=")
+    casing = breaks = 0
+    for op, i, j in ops:
+        if op != "=":
+            continue
+        (_, ref_form, ref_end), (_, hyp_form, hyp_end) = ref[i], hyp[j]
+        starts_sentence = i == 0 or ref[i - 1][2]
+        if ref_end != hyp_end:
+            breaks += 1
+        if not starts_sentence and ref_form != hyp_form and ref_form.lower() == hyp_form.lower():
+            casing += 1
     return {"words": len(name_flags), "sub": kinds.count("sub"), "del": kinds.count("del"), "ins": kinds.count("ins"),
-            "errors": len(kinds) - kinds.count("="), "names": sum(name_flags), "names_wrong": wrong_names}
+            "errors": len(kinds) - kinds.count("="), "names": sum(name_flags), "names_wrong": wrong_names,
+            "casing": casing, "breaks": breaks}
 
 
 def markup(reference: str, hypothesis: str) -> tuple[list[tuple[str, str]], list[str]]:

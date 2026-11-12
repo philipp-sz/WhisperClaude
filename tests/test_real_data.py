@@ -78,6 +78,17 @@ def test_empty_texts(reference, hypothesis, errors):
     assert rd.evaluate(reference, hypothesis)["errors"] == errors
 
 
+@pytest.mark.parametrize("reference, hypothesis, casing, breaks", [
+    ("Ich habe ein Haus.", "ich habe ein haus.", 1, 0), # capital of "Haus" counts, sentence start "Ich" does not
+    ("Ich habe zwei Hunde", "ich habe 2 Hunde", 0, 0), # "zwei" vs "2" is no casing difference
+    ("Das ist gut. Ja", "Das ist gut Ja", 0, 1), # the period is missing in the hypothesis
+    ("Das ist gut. Ja!", "Das ist gut. Ja!", 0, 0), # identical texts
+])
+def test_casing_and_sentence_breaks_are_counted_without_errors(reference, hypothesis, casing, breaks):
+    result = rd.evaluate(reference, hypothesis)
+    assert (result["casing"], result["breaks"], result["errors"]) == (casing, breaks, 0)
+
+
 def test_a_reader_never_sees_a_half_written_cache(tmp_path):
     import threading
     import time
