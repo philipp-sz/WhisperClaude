@@ -28,10 +28,10 @@ log = logging.getLogger(__name__)
 _TEXT_PATTERN, _TEXT_PATTERN2 = 10014, 10024
 _GET_FOCUSED_ELEMENT = 8 # IUIAutomation
 _GET_CURRENT_PATTERN = 16 # IUIAutomationElement
-_TP_GET_SELECTION = 5 # IUIAutomationTextPattern
+_TP_GET_SELECTION, _TP_GET_DOCUMENT_RANGE = 5, 7 # IUIAutomationTextPattern
 _TP2_GET_CARET_RANGE = 10 # IUIAutomationTextPattern2 (after the 7 slots of TextPattern + 1)
 _ARRAY_LENGTH, _ARRAY_GET_ELEMENT = 3, 4 # IUIAutomationTextRangeArray
-_RANGE_CLONE, _RANGE_GET_TEXT = 3, 12 # IUIAutomationTextRange
+_RANGE_CLONE, _RANGE_COMPARE_ENDPOINTS, _RANGE_GET_TEXT = 3, 5, 12 # IUIAutomationTextRange
 _RANGE_MOVE_ENDPOINT_BY_UNIT, _RANGE_MOVE_ENDPOINT_BY_RANGE = 14, 15
 _ENDPOINT_START, _ENDPOINT_END, _UNIT_CHARACTER = 0, 1, 0
 _RELEASE = 2
@@ -123,20 +123,44 @@ def _selection_start(get_pattern: Callable, owned: list[int]) -> int | None:
                                        ctypes.POINTER(ctypes.c_void_p)), 0))
 
 
-def _caret_range(automation: int, owned: list[int]) -> int | None:
-    """The text range at the caret (or the selection start) of the focused element, or None."""
+def _document_range(get_pattern: Callable, owned: list[int]) -> int | None:
+    """The whole text range of the focused element's TextPattern, or None."""
+    pattern = _keep(owned, _out_ptr(get_pattern, _TEXT_PATTERN))
+    if not pattern:
+        return None
+    return _keep(owned, _out_ptr(_slot(pattern, _TP_GET_DOCUMENT_RANGE,
+                                       ctypes.POINTER(ctypes.c_void_p))))
+
+
+def _caret_range(automation: int, owned: list[int]) -> tuple[int | None, int | None]:
+    """The text range at the caret (or the selection start) of the focused element, and the
+    element's whole text range (the limit for reading backwards); each None if unavailable."""
     element = _keep(owned, _out_ptr(_slot(automation, _GET_FOCUSED_ELEMENT,
                                           ctypes.POINTER(ctypes.c_void_p))))
     if not element:
-        return None
+        return None, None
     get_pattern = _slot(element, _GET_CURRENT_PATTERN, ctypes.c_int,
                         ctypes.POINTER(ctypes.c_void_p))
-    return (_caret_from_text_pattern2(get_pattern, owned)
-            or _selection_start(get_pattern, owned))
+    caret = (_caret_from_text_pattern2(get_pattern, owned)
+             or _selection_start(get_pattern, owned))
+    return caret, _document_range(get_pattern, owned)
 
 
-def _text_before_range(rng: int, n: int) -> str:
-    """The up to n characters before the start of rng (collapsed there first)."""
+def _compare_starts(rng: int, other: int) -> int:
+    """< 0 if rng starts before other, 0 at the same place, > 0 after it."""
+    result = ctypes.c_int()
+    _slot(rng, _RANGE_COMPARE_ENDPOINTS, ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
+          ctypes.POINTER(ctypes.c_int))(_ENDPOINT_START, other, _ENDPOINT_START,
+                                        ctypes.byref(result))
+    return result.value
+
+
+def _text_before_range(rng: int, n: int, limit: int | None = None) -> str:
+    """The up to n characters before the start of rng (collapsed there first), not reaching
+    before the start of `limit` (the focused element's own text).
+
+    Chromium (VS Code, Edge, Electron apps) lets the range walk out of an empty input into the
+    page text in front of it, which made an empty chat box look like it followed a word."""
     # collapse to the start (a selection is replaced by the paste), then extend n back
     _slot(rng, _RANGE_MOVE_ENDPOINT_BY_RANGE, ctypes.c_int, ctypes.c_void_p, ctypes.c_int)(
         _ENDPOINT_END, rng, _ENDPOINT_START)
@@ -145,6 +169,9 @@ def _text_before_range(rng: int, n: int) -> str:
           ctypes.POINTER(ctypes.c_int))(_ENDPOINT_START, _UNIT_CHARACTER, -n, ctypes.byref(moved))
     if moved.value == 0:
         return ""
+    if limit and _compare_starts(rng, limit) < 0: # walked out of the element: clamp
+        _slot(rng, _RANGE_MOVE_ENDPOINT_BY_RANGE, ctypes.c_int, ctypes.c_void_p, ctypes.c_int)(
+            _ENDPOINT_START, limit, _ENDPOINT_START)
     bstr = ctypes.c_void_p()
     _slot(rng, _RANGE_GET_TEXT, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
         n, ctypes.byref(bstr))
@@ -160,13 +187,13 @@ def _range_before_caret(automation: int, n: int) -> str | None:
     """Worker-thread body: the up to n characters before the caret/selection start, or None."""
     owned: list[int] = []
     try:
-        caret = _caret_range(automation, owned)
+        caret, limit = _caret_range(automation, owned)
         if not caret:
             return None
         rng = _keep(owned, _out_ptr(_slot(caret, _RANGE_CLONE, ctypes.POINTER(ctypes.c_void_p))))
         if not rng:
             return None
-        return _text_before_range(rng, n)
+        return _text_before_range(rng, n, limit)
     except OSError:
         return None # e.g. UIA_E_NOTSUPPORTED, or the element vanished
     finally:
