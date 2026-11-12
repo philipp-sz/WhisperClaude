@@ -59,14 +59,11 @@ class ModelConfig:
     language: str = "" # "" = auto-detect (any of Whisper's 99 languages), else e.g. "de"
     initial_prompt: str = DEFAULT_PROMPT
     vocabulary: tuple[str, ...] = DEFAULT_VOCABULARY # words Whisper should spell exactly
-    vocabulary_sources: tuple[str, ...] = ("~/code", "~/projects") # own texts for the automatic vocabulary
 
     def __post_init__(self) -> None:
         _check(self.device in DEVICES, f"[model] device must be one of {sorted(DEVICES)}")
         _check(all(isinstance(w, str) and w.strip() for w in self.vocabulary),
                "[model] vocabulary must be a list of non-empty strings")
-        _check(all(isinstance(s, str) and s.strip() for s in self.vocabulary_sources),
-               "[model] vocabulary_sources must be a list of folder or file paths")
         _check(self.compute_type in COMPUTE_TYPES,
                f"[model] compute_type must be one of {sorted(COMPUTE_TYPES)}")
         for key in ("cpu_threads", "batch_size"):

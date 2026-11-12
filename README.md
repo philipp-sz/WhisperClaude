@@ -91,7 +91,7 @@ A bullet item ends at the end of its sentence. Sentences that only contain "new 
 - System-wide hotkey. Left Ctrl alone toggles recording. Ctrl+C, Ctrl+click and Ctrl+scroll do not, and neither do Ctrl events that software sends (a touchpad pinch).
 - Dictation in Whisper's 100 languages, also mixed, with automatic language detection.
 - Translation of selected text or a dictation into 201 languages with NLLB-200, on the GPU or CPU. The source language is detected or picked.
-- Vocabulary for names and technical terms: a short list of your own, plus an automatic one built at each start from your notes and project docs (`[model] vocabulary_sources`). It picks the words Whisper's tokenizer doesn't know as whole words, favors recent files and stays within the prompt's token budget.
+- Vocabulary for names and technical terms: a short list of your own (`[model] vocabulary`), passed to Whisper with the prompt.
 - Self-healing: if the GPU is missing at start or after a wake, the app runs on the CPU, looks for the GPU again in the background, switches back when it returns, and only says something if it stays missing. A transcription that fails is retried once with a freshly loaded model, so the dictation is not lost. A Whisper repetition loop ("dx dx dx ...") is detected and that chunk is decoded again.
 - Live transcription. Finished 30 s chunks are transcribed while recording continues.
 - The previous clipboard is restored after pasting, including images and files. Dictations are never synced to the cloud clipboard.
