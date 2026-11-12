@@ -124,9 +124,9 @@ def audio(monkeypatch):
             raise sd.PortAudioError("Error querying device -1")
         return FakeStream(**kwargs)
 
-    monkeypatch.setattr(recorder.sd, "InputStream", input_stream)
-    monkeypatch.setattr(recorder.sd, "_terminate", lambda: calls.__setitem__("terminate", calls["terminate"] + 1))
-    monkeypatch.setattr(recorder.sd, "_initialize", lambda: calls.__setitem__("initialize", calls["initialize"] + 1))
+    monkeypatch.setattr(sd, "InputStream", input_stream)
+    monkeypatch.setattr(sd, "_terminate", lambda: calls.__setitem__("terminate", calls["terminate"] + 1))
+    monkeypatch.setattr(sd, "_initialize", lambda: calls.__setitem__("initialize", calls["initialize"] + 1))
     return calls
 
 

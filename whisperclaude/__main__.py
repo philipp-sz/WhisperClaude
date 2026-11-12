@@ -185,6 +185,7 @@ def start_model_loading(events: WakeQueue, m: ModelConfig, t: TranslationConfig,
     was said; reproduced 3/66 with, 0/66 without). Commands still work without them.
     """
     def run() -> None:
+        import sounddevice # noqa: F401 # ~150 ms (PortAudio init): here, not in the first start() on the Tk thread
         if _load_whisper(events, m) and translation is not None:
             _load_translator(t, translation)
 

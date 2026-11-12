@@ -1,4 +1,6 @@
 """Recorder without a microphone: a fake stream stands in for sounddevice."""
+import time
+
 import numpy as np
 
 from whisperclaude.recorder import Recorder
@@ -38,3 +40,63 @@ def test_stop_with_a_vanished_device_keeps_the_audio():
     audio = r.stop()
     assert len(audio) == 320 # the dictation isn't lost
     assert stream.closed and not r.is_recording # and the next start() opens a new stream
+
+
+class SlowCloseStream(FakeStream):
+    """close() takes 0.3 s, like the real stream."""
+
+    def close(self):
+        time.sleep(0.3)
+        self.closed = True
+
+
+def test_stop_returns_before_the_slow_close_finishes():
+    stream = SlowCloseStream()
+    r = recording(stream)
+    start = time.monotonic()
+    audio = r.stop()
+    assert time.monotonic() - start < 0.2
+    assert len(audio) == 320 and not stream.closed
+    r._wait_for_close()
+    assert stream.closed
+
+
+def test_start_after_stop_waits_until_the_close_finished(monkeypatch):
+    stream = SlowCloseStream()
+    r = recording(stream)
+    r.stop()
+    seen = []
+
+    def open_stream():
+        seen.append(stream.closed) # what the new stream sees: the old one must be closed
+        return FakeStream()
+
+    monkeypatch.setattr(r, "_open", open_stream)
+    r.start()
+    assert seen == [True] and r.is_recording
+
+
+def test_refresh_devices_waits_until_the_close_finished(monkeypatch):
+    import sounddevice as sd
+
+    stream = SlowCloseStream()
+    r = recording(stream)
+    r.stop()
+    seen = []
+    monkeypatch.setattr(sd, "_terminate", lambda: seen.append(stream.closed))
+    monkeypatch.setattr(sd, "_initialize", lambda: None)
+    r.refresh_devices()
+    assert seen == [True]
+
+
+def test_a_close_that_outlasts_the_timeout_is_logged_and_start_goes_on(monkeypatch, caplog):
+    import whisperclaude.recorder as recorder_module
+
+    monkeypatch.setattr(recorder_module, "CLOSE_TIMEOUT_S", 0.05)
+    r = recording(SlowCloseStream())
+    r.stop()
+    monkeypatch.setattr(r, "_open", lambda: FakeStream())
+    with caplog.at_level("WARNING", logger="whisperclaude.recorder"):
+        r.start()
+    assert r.is_recording
+    assert any("still closing" in m for m in caplog.messages)
