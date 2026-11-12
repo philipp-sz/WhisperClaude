@@ -30,6 +30,7 @@ COLORS = {State.LOADING: "#9aa0a6", State.IDLE: "#4caf50", State.STARTING: "#4ca
           State.TRANSCRIBING: "#f5a623", State.TRANSLATING: "#f5a623"}
 FPS = 10
 PASTED_FLASH_S = 1.2
+QUIT_FAST_ANSWER_S = 0.25 # the tray thread waits this long for the Quit dialog, no longer
 QUIT_QUESTION = ("Quit WhisperClaude?\n\nDictation stays off until you start it again "
                  "or log in the next time.")
 
@@ -216,13 +217,40 @@ class Tray:
             pystray.MenuItem("Quit WhisperClaude", lambda icon, item: on_quit()),
         )
 
-    @staticmethod
-    def _confirmed(on_quit: Callable[[], None], confirm: Callable[[], bool]) -> Callable[[], None]:
-        def ask_first() -> None: # runs on the tray thread, the menu is closed already
-            if confirm():
+    def _confirmed(self, on_quit: Callable[[], None],
+                   confirm: Callable[[], bool]) -> Callable[[], None]:
+        """Quit asks first, in a thread of its own, never on the tray thread.
+
+        The click arrives inside the tray window's WM_NOTIFY handler. A dialog opened right
+        there runs its modal loop on the tray thread, which also dispatches every other tray
+        message into Python (mouse-over notifications, menu rebuilds that wait for
+        ``_menu_lock``): while one of those blocks, the dialog gets no messages, so Yes and No
+        do nothing and the app has to be killed. In its own thread the dialog only depends on
+        itself; the tray thread returns at once (a fast answer is still waited for briefly).
+        """
+        asking = threading.Lock() # one dialog at a time: a second Quit click must not stack one
+
+        def ask() -> None:
+            try:
+                log.info("tray menu: Quit asked")
+                answer = confirm()
+            except Exception:
+                log.exception("quit confirmation failed")
+                answer = False
+            finally:
+                asking.release()
+            if answer:
                 on_quit()
             else:
                 log.info("tray menu: Quit cancelled")
+
+        def ask_first() -> None:
+            if not asking.acquire(blocking=False):
+                log.info("tray menu: Quit is already being asked")
+                return
+            worker = threading.Thread(target=ask, daemon=True, name="quit-dialog")
+            worker.start()
+            worker.join(QUIT_FAST_ANSWER_S)
 
         return ask_first
 
