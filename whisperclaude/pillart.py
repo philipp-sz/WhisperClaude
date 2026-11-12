@@ -79,14 +79,15 @@ def waves(width: int, height: int, envelope: np.ndarray, t: float,
     per layer. `envelope` (0..1, any length) sets the height along the width.
     Returns (height, width, 3) uint8."""
     u = (np.arange(width, dtype=np.float32) + 0.5) / width
-    y = np.arange(height, dtype=np.float32)[:, None] + 0.5
+    rows = (height + 1) // 2 # only the top half is drawn; the rest mirrors it below
+    y = np.arange(rows, dtype=np.float32)[:, None] + 0.5
     mid = height / 2
     reach = mid - 1.5
     e = np.pad(np.asarray(envelope, np.float32), 2, mode="edge")
     e = np.convolve(e, np.array([1, 2, 3, 2, 1], np.float32) / 9, "valid") # calm the jitter
     env = _smooth(e, u) ** 0.75 * np.sin(np.pi * u) ** 0.5 # taper to nothing at both ends
-    out = np.broadcast_to(rgb(bg), (height, width, 3)).copy()
-    dist = np.abs(y - mid)
+    out = np.broadcast_to(rgb(bg), (rows, width, 3)).copy()
+    dist = np.abs(y - mid) # the only y-term: the picture is symmetric around the middle line
     for (cycles, speed, phase, share), color in zip(_LAYERS, colors):
         wobble = 0.3 + 0.7 * (0.5 + 0.5 * np.sin(2 * np.pi * cycles * u - speed * t + phase))
         a = reach * np.tanh(1.35 * env * wobble * share) # loud: rounded peaks, never clipped
@@ -97,7 +98,10 @@ def waves(width: int, height: int, envelope: np.ndarray, t: float,
     glow = np.clip(line / 2 + 0.5 - dist, 0, 1)
     shade = (0.35 + 0.65 * np.sin(np.pi * u) ** 0.8)[None, :]
     out += (1 - out) * (glow * shade)[..., None] * 0.9
-    return _to_image(out)
+    # Row k and row height-1-k have the same distance to the middle line, so the bottom
+    # half is a mirror of the top half (exact, also for an odd height).
+    mirror = np.minimum(np.arange(height), height - 1 - np.arange(height))
+    return _to_image(out)[mirror]
 
 
 def flowing(n: int, t: float, base: float = 0.3, swell: float = 0.6) -> np.ndarray:

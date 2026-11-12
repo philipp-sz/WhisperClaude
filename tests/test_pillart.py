@@ -29,6 +29,41 @@ def test_waves_grow_with_the_level_and_taper_at_the_ends():
     assert (speech[0, :] == [0x20, 0x21, 0x24]).all() # stays inside the image
 
 
+def _waves_full(width, height, envelope, t, colors, bg, line=1.0):
+    """Reference: the waves rendered row by row over the whole height (before mirroring)."""
+    u = (np.arange(width, dtype=np.float32) + 0.5) / width
+    y = np.arange(height, dtype=np.float32)[:, None] + 0.5
+    mid = height / 2
+    reach = mid - 1.5
+    e = np.pad(np.asarray(envelope, np.float32), 2, mode="edge")
+    e = np.convolve(e, np.array([1, 2, 3, 2, 1], np.float32) / 9, "valid")
+    env = pillart._smooth(e, u) ** 0.75 * np.sin(np.pi * u) ** 0.5
+    out = np.broadcast_to(pillart.rgb(bg), (height, width, 3)).copy()
+    dist = np.abs(y - mid)
+    for (cycles, speed, phase, share), color in zip(pillart._LAYERS, colors):
+        wobble = 0.3 + 0.7 * (0.5 + 0.5 * np.sin(2 * np.pi * cycles * u - speed * t + phase))
+        a = reach * np.tanh(1.35 * env * wobble * share)
+        cover = np.clip(a + 0.5 - dist, 0, 1)[..., None]
+        near = np.clip(1 - dist / (a + 1), 0, 1)[..., None]
+        c = pillart.rgb(color)
+        out += (c + (1 - c) * 0.3 * near ** 2 - out) * cover * 0.82
+    glow = np.clip(line / 2 + 0.5 - dist, 0, 1)
+    shade = (0.35 + 0.65 * np.sin(np.pi * u) ** 0.8)[None, :]
+    out += (1 - out) * (glow * shade)[..., None] * 0.9
+    return pillart._to_image(out)
+
+
+@pytest.mark.parametrize("height", [55, 56])
+def test_waves_mirrored_half_is_exact(height):
+    rng = np.random.default_rng(0)
+    palette = pillart.PALETTES["recording"]
+    for level in (0.0, 0.3, 1.0, 1.4):
+        for t in (0.0, 0.37, 2.5):
+            envelope = level * rng.random(int(rng.integers(3, 40)))
+            fast = pillart.waves(192, height, envelope, t, palette, BG)
+            assert np.array_equal(fast, _waves_full(192, height, envelope, t, palette, BG))
+
+
 def test_working_envelope_moves():
     a, b = pillart.flowing(24, 0.0), pillart.flowing(24, 0.4)
     assert a.shape == (24,) and not np.allclose(a, b)
