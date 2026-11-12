@@ -93,6 +93,15 @@ def test_live_short_recording_does_everything_at_the_stop():
     assert live.finish(audio) == "w1 w2"
 
 
+def test_finish_reports_the_tail_it_transcribed():
+    audio = dictation()
+    live = t.LiveTranscription(fake_model)
+    for end in range(5 * SR, len(audio), 5 * SR):
+        live.feed(audio[:end])
+    live.finish(audio)
+    assert live.tail_chunks == 1 and live.tail_s >= 0 # the stop only had the last chunk
+
+
 def test_live_never_takes_the_newest_audio():
     """Nothing is decided about a passage that is still being spoken."""
     def burst(k, s):

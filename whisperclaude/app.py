@@ -23,6 +23,7 @@ import queue
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
@@ -164,6 +165,7 @@ class _MicStart:
 
     def __init__(self) -> None:
         self.wake = threading.Event()
+        self.audio_at: float | None = None # perf_counter() of the first audio block
         self.cancelled = False # only touched on the Tk thread
         self.returned = threading.Event() # the worker is completely done with the recorder
         self.opened = self.abandoned = False
@@ -188,6 +190,19 @@ class _MicStart:
         self.cancelled = True
         self.wake.set()
 
+    def on_audio(self) -> None:
+        """Recorder's audio thread: a timestamp and an Event, nothing else."""
+        self.audio_at = time.perf_counter()
+        self.wake.set()
+
+
+@dataclass
+class _StopTiming:
+    """Timings of one stop tap, for the log line after the transcription."""
+    tap: float # perf_counter() when the Tk thread handled the stop tap
+    recorder_s: float = 0.0 # recorder.stop()
+    worker_s: float = 0.0 # tap -> the transcription worker starts
+
 
 class _LiveRun:
     """While recording, a worker thread hands the audio so far to the live transcription and
@@ -201,6 +216,7 @@ class _LiveRun:
         self._thread = threading.Thread(target=self._feed, args=(snapshot,), daemon=True,
                                         name="live-transcription")
         self._thread.start()
+        self.join_s = 0.0 # waiting for the feeder thread in finish()
 
     def _feed(self, snapshot: Callable[[], np.ndarray]) -> None:
         feeding, watching = True, self._stop_after_s > 0
@@ -232,7 +248,9 @@ class _LiveRun:
 
     def finish(self, audio: np.ndarray) -> str:
         self.stop()
+        t0 = time.perf_counter()
         self._thread.join() # a chunk being transcribed right now is part of the text
+        self.join_s = time.perf_counter() - t0
         return self.live.finish(audio)
 
 
@@ -280,6 +298,7 @@ class App:
         # Extra event kinds (e.g. "model loaded" from the loader thread) -> handler(payload)
         self.handlers: dict[str, Callable[[object], None]] = {}
         self._rec_started = 0.0
+        self._tap_at = 0.0 # perf_counter() of the start tap
         self._live: _LiveRun | None = None
         self._mic: _MicStart | None = None # the microphone start in progress (STARTING)
         self._stuck_open: _MicStart | None = None # an abandoned start whose worker is still stuck
@@ -483,6 +502,7 @@ class App:
 
     def _start_recording(self) -> None:
         """Tk thread: enter STARTING and open the microphone on a worker thread."""
+        self._tap_at = time.perf_counter()
         stuck = self._stuck_open
         if stuck is not None and not stuck.returned.is_set():
             # PortAudio and the Recorder are not safe for a second open next to a hung one
@@ -509,7 +529,7 @@ class App:
         The recorder's callback only sets attempt.wake (it runs on the audio thread)."""
         error: Exception | None = None
         try:
-            self.recorder.start(attempt.wake.set)
+            self.recorder.start(attempt.on_audio)
         except Exception as e: # e.g. no microphone
             log.exception("could not start recording")
             error = e
@@ -544,7 +564,7 @@ class App:
                 log.exception("could not close the microphone")
             self._set(State.IDLE, "Cancelled" if attempt.cancelled else f"Error: {error}")
             return
-        self._begin_recording()
+        self._begin_recording(attempt.audio_at)
 
     def _cancel_start(self) -> None:
         """Stop tap or Esc while STARTING: the worker ends at once, and its report closes the
@@ -560,10 +580,11 @@ class App:
                 return
             self.on_state(State.STARTING, "Cancelling…")
 
-    def _begin_recording(self) -> None:
+    def _begin_recording(self, audio_at: float | None = None) -> None:
         """Tk thread: audio flows, so the user can speak now."""
         self._rec_started = time.monotonic()
-        log.info("recording started")
+        first_audio_s = audio_at - self._tap_at if audio_at is not None else 0.0
+        log.info("recording started, first audio %.3f s after the start tap", first_audio_s)
         make_live = getattr(self.transcriber, "live", None)
         snapshot = getattr(self.recorder, "snapshot", None)
         if make_live is not None and snapshot is not None:
@@ -579,9 +600,12 @@ class App:
 
     def _stop_recording(self, auto: bool = False, translate: bool = False,
                         cancelled: bool = False) -> None:
+        stop = _StopTiming(tap=time.perf_counter())
         live = self._stop_live()
         try:
+            t0 = time.perf_counter()
             audio = self.recorder.stop()
+            stop.recorder_s = time.perf_counter() - t0
         except Exception as e: # must not leave us stuck in RECORDING
             log.exception("could not stop recording")
             self._set(State.IDLE, f"Error: {e}")
@@ -594,16 +618,18 @@ class App:
         if translate: # pick the language while the worker transcribes
             job = self._job = _TranslateJob(dictation=True)
             self._show_picker(job)
-        threading.Thread(target=self._transcribe, args=(audio, live, auto, job, cancelled),
+        threading.Thread(target=self._transcribe, args=(audio, live, auto, job, cancelled, stop),
                          daemon=True).start()
 
     def _transcribe(self, audio: np.ndarray, live: _LiveRun | None = None,
                     auto: bool = False, job: _TranslateJob | None = None,
-                    cancelled: bool = False) -> None:
+                    cancelled: bool = False, stop: _StopTiming | None = None) -> None:
         """Worker thread: transcribe and paste (or keep, see App). Pasting here (not on the
         Tk thread) keeps the main loop free, so the hotkey thread never waits on it. State
         stays TRANSCRIBING until pasted, so toggles can't interfere."""
-        text = self._run_transcriber(audio, live, job)
+        if stop is not None:
+            stop.worker_s = time.perf_counter() - stop.tap
+        text = self._run_transcriber(audio, live, job, stop)
         if text is None:
             return
         stopped = f"Stopped after {self.stop_after_silence_s:.0f} s of silence"
@@ -624,7 +650,7 @@ class App:
             self._paste(text)
 
     def _run_transcriber(self, audio: np.ndarray, live: _LiveRun | None,
-                         job: _TranslateJob | None) -> str | None:
+                         job: _TranslateJob | None, stop: _StopTiming | None = None) -> str | None:
         """Worker thread: the transcript ("" = nothing recognized). None = it failed; the
         error is reported and the picker closed."""
         try:
@@ -635,9 +661,18 @@ class App:
                 if self.reload is None:
                     raise
                 text = self._reload_and_retry(audio)
+            elapsed = time.perf_counter() - t0
             early = getattr(live.live, "done_s", 0.0) if live else 0.0
-            log.info("transcribed %.1f s audio in %.2f s after the stop (%.0f s while recording)",
-                     len(audio) / SAMPLE_RATE, time.perf_counter() - t0, early)
+            # without live transcription the whole transcription is the "tail"
+            join_s = live.join_s if live else 0.0
+            tail_s = getattr(live.live, "tail_s", 0.0) if live else elapsed
+            tail_chunks = getattr(live.live, "tail_chunks", 0) if live else 0
+            tap_to_worker_s, recorder_s = (stop.worker_s, stop.recorder_s) if stop else (0.0, 0.0)
+            log.info("transcribed %.1f s audio in %.2f s after the stop (%.0f s while recording); "
+                     "stop tap to worker %.3f s, recorder.stop %.3f s, waited %.3f s for the live "
+                     "feeder, tail %.2f s in %d chunks",
+                     len(audio) / SAMPLE_RATE, elapsed, early, tap_to_worker_s, recorder_s,
+                     join_s, tail_s, tail_chunks)
             return text or ""
         except Exception as e:
             log.exception("transcription failed")
