@@ -56,7 +56,7 @@ class ModelConfig:
     cpu_threads: int = 4
     beam_size: int = 0 # 0 = auto: 5 on an NVIDIA GPU, 1 on the CPU
     batch_size: int = 4
-    language: str = "" # "" = auto-detect (any of Whisper's 99 languages), else e.g. "de"
+    language: str = "" # "" = auto-detect (any of Whisper's languages), else e.g. "de"
     initial_prompt: str = DEFAULT_PROMPT
     vocabulary: tuple[str, ...] = DEFAULT_VOCABULARY # words Whisper should spell exactly
 

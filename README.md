@@ -125,7 +125,7 @@ The slow transcription tests use two short recordings of the user's voice, made 
 ## Limitations
 
 - Windows only.
-- No space is inserted before a dictation that follows existing text. The app cannot read the text field.
+- Smart spacing reads the character before the caret through UI Automation. Apps that don't expose it fall back to the last paste, so the first dictation into such a field can lack its leading space.
 - If another app holds the clipboard for more than a second, nothing is pasted. The dictation stays in "Recent dictations".
 - The first 0.2–0.4 s after the start tap can be lost while the microphone opens.
 - With the Intel iGPU backend, the app uses 6–9% of one CPU core while idle, because a thread in Intel's OpenCL runtime keeps running. The CPU backend uses 0.07%. See [docs](docs/transcription.md#idle-cpu-with-the-igpu-backend).

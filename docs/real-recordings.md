@@ -309,3 +309,27 @@ Again parallel subagent experiments; at most one used the iGPU at a time.
 - **Translation speed** (NLLB-1.3B on the CPU): nothing to gain, see [translation.md](translation.md#call-settings-2026-11-12).
 - **Short translation inputs** (192 invented 1–4 word inputs): 71% correct, 8% with added words ("Ja" → "Yes, I did."), 21% wrong meaning ("Einstellungen" → "Employment", "Speichern" → "Storage"). The wrong meanings are the larger problem; fixes (length caps, n-best, wrapping, NLLB-600M) are prepared but not run.
 - **Live text preview** above the pill (finished chunks while recording): built and working, **not kept by the author**.
+
+## Sixth round: experiments and decisions (2026-11-12 night)
+
+30 short Haiku subagent experiments (H1-H30), at most one on the iGPU at a time.
+
+### Built (committed 2026-11-12)
+
+| Change | Evidence |
+|---|---|
+| Text fixes (`textfix.py`): German "Model"/"Chatmodel" -> "Modell"/"Chatmodell" in sentences that are German by a function-word count; English "a" -> "an" before a vowel sound (not "a one", "a European", capitalized words) | 4 fixes on the 24 recordings, 0 correct words changed; tests in `test_textfix.py` |
+| OpenBLAS limited to one thread at startup (`early.single_thread_blas`) | about 225 MB less private memory, identical output, +0.07 s load |
+| Timing log lines: first-audio delay at the start, recorder stop, live-feeder wait and tail chunks after the stop (no text) | `test_app.py`, `test_live.py` |
+| Eight functions flattened (shallower nesting, smaller try blocks) | behaviour-identical review; full test suite |
+| `scripts/setup.py`: one-step install for new users (venv, backend extras, check) | `test_setup.py`, one real install run |
+
+### Built, not kept by the author
+
+Math-variable guard for "i" (2 cases), vocabulary term variants and "cloud code" -> "Claude Code" (21 fixes, not wired in), record while the model loads, per-app profiles, quiet-microphone hint, auto Enter after the paste, German spoken commands ("Befehl ..."), paragraph breaks between pieces, the "carrier" sentence for short translation inputs (isolated 1-4 word inputs: 57 -> about 148 of 192 correct, but mixed inside dictations and about 2x slower).
+
+### Measured, rejected
+
+- **Sound-alike errors** (the most annoying error type): large-v3 144 errors against turbo's 131 and 2.5x slower (fixes 14 sound-alikes, adds 17); a German LM over fixed pairs (das/dass, noch/auch ...) finds only 5 pair errors in the current transcripts; prompt variants stay within the noise; forcing each chunk's detected language gives identical text; casing and chunk-break rules lose more than they gain. The errors are spread over many different words: more recordings of them are the next step.
+- **Incremental live VAD:** no gain over the current one.
+- **NPU retry:** "device lost" at the first inference; retry after a Windows restart.
