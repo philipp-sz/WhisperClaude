@@ -31,9 +31,9 @@ _GET_CURRENT_PATTERN = 16 # IUIAutomationElement
 _TP_GET_SELECTION, _TP_GET_DOCUMENT_RANGE = 5, 7 # IUIAutomationTextPattern
 _TP2_GET_CARET_RANGE = 10 # IUIAutomationTextPattern2 (after the 7 slots of TextPattern + 1)
 _ARRAY_LENGTH, _ARRAY_GET_ELEMENT = 3, 4 # IUIAutomationTextRangeArray
-_RANGE_CLONE, _RANGE_COMPARE_ENDPOINTS, _RANGE_GET_TEXT = 3, 5, 12 # IUIAutomationTextRange
+_RANGE_CLONE, _RANGE_COMPARE_ENDPOINTS, _RANGE_EXPAND, _RANGE_GET_TEXT = 3, 5, 6, 12
 _RANGE_MOVE_ENDPOINT_BY_UNIT, _RANGE_MOVE_ENDPOINT_BY_RANGE = 14, 15
-_ENDPOINT_START, _ENDPOINT_END, _UNIT_CHARACTER = 0, 1, 0
+_ENDPOINT_START, _ENDPOINT_END, _UNIT_CHARACTER, _UNIT_LINE = 0, 1, 0, 3
 _RELEASE = 2
 
 COINIT_MULTITHREADED = 0
@@ -155,7 +155,21 @@ def _compare_starts(rng: int, other: int) -> int:
     return result.value
 
 
-def _text_before_range(rng: int, n: int, limit: int | None = None) -> str:
+def _at_line_start(rng: int, owned: list[int]) -> bool:
+    """True if the (collapsed) rng sits at the start of a line.
+
+    Chromium reports no line break before an empty paragraph (a new line made with Enter in
+    claude.ai, ProseMirror and similar editors): the character before the caret is the previous
+    line's last one. The line around the caret still starts exactly at the caret."""
+    line = _keep(owned, _out_ptr(_slot(rng, _RANGE_CLONE, ctypes.POINTER(ctypes.c_void_p))))
+    if not line:
+        return False
+    _slot(line, _RANGE_EXPAND, ctypes.c_int)(_UNIT_LINE)
+    return _compare_starts(line, rng) == 0
+
+
+def _text_before_range(rng: int, n: int, limit: int | None = None,
+                       owned: list[int] | None = None) -> str:
     """The up to n characters before the start of rng (collapsed there first), not reaching
     before the start of `limit` (the focused element's own text).
 
@@ -164,6 +178,8 @@ def _text_before_range(rng: int, n: int, limit: int | None = None) -> str:
     # collapse to the start (a selection is replaced by the paste), then extend n back
     _slot(rng, _RANGE_MOVE_ENDPOINT_BY_RANGE, ctypes.c_int, ctypes.c_void_p, ctypes.c_int)(
         _ENDPOINT_END, rng, _ENDPOINT_START)
+    if owned is not None and _at_line_start(rng, owned):
+        return "\n" # needs_space treats a line start like a line break: no space
     moved = ctypes.c_int()
     _slot(rng, _RANGE_MOVE_ENDPOINT_BY_UNIT, ctypes.c_int, ctypes.c_int, ctypes.c_int,
           ctypes.POINTER(ctypes.c_int))(_ENDPOINT_START, _UNIT_CHARACTER, -n, ctypes.byref(moved))
@@ -193,7 +209,7 @@ def _range_before_caret(automation: int, n: int) -> str | None:
         rng = _keep(owned, _out_ptr(_slot(caret, _RANGE_CLONE, ctypes.POINTER(ctypes.c_void_p))))
         if not rng:
             return None
-        return _text_before_range(rng, n, limit)
+        return _text_before_range(rng, n, limit, owned)
     except OSError:
         return None # e.g. UIA_E_NOTSUPPORTED, or the element vanished
     finally:
