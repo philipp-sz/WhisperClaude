@@ -10,6 +10,10 @@ SAMPLE_RATE = 16_000
 # Correctly punctuated bilingual "previous text": Whisper copies its style. Fixes missing
 # punctuation, capitals after pauses, and German+English audio being translated to one language.
 DEFAULT_PROMPT = "Hallo, das ist ein Test. Okay, so let's see how this works, and then we'll decide."
+# The languages DEFAULT_PROMPT is written in. A chunk in any other language is transcribed
+# without the prompt sentence: with it, Whisper translated French and Spanish into English
+# (FLEURS: 77 % and 55 % word errors), even with the right language token forced.
+DEFAULT_PROMPT_LANGUAGES = ("de", "en")
 DEFAULT_VOCABULARY = ("Claude", "cloud", "Gemini", "VS Code", "iGPU")
 
 # Whisper's language codes (large-v3 and turbo: 100; "yue" is not in older models)

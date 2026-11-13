@@ -41,7 +41,8 @@ def make_local(name: str):
     engine = create_transcriber(
         device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model, language=m.language or None,
         initial_prompt=m.initial_prompt or None, vocabulary=m.vocabulary, compute_type=m.compute_type,
-        beam_size=m.beam_size, cpu_threads=m.cpu_threads, batch_size=m.batch_size)
+        beam_size=m.beam_size, cpu_threads=m.cpu_threads, batch_size=m.batch_size,
+        prompt_languages=m.prompt_languages)
     data_dir = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "WhisperClaude"
     expected = recovery.last_device(data_dir)
     if recovery.device_kind(engine.device) == "cpu" and expected in recovery.GPU_KINDS:

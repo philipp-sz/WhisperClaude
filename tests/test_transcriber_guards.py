@@ -114,3 +114,13 @@ def test_gpu_present_survives_a_hanging_probe(monkeypatch):
         raise subprocess.TimeoutExpired("python", 60)
     monkeypatch.setattr(subprocess, "run", hang)
     assert system.gpu_present("cuda") is False
+
+
+def test_detect_language_never_gets_more_than_30_s():
+    """OpenVINO GenAI generate(max_new_tokens=1) never returns on audio just over 30 s."""
+    seen = []
+    engine = fake_openvino({})
+    engine.pipeline.generate = lambda a, cfg: seen.append(len(a)) or SimpleNamespace(language="<|de|>")
+    engine.pipeline.get_generation_config = lambda: SimpleNamespace()
+    engine.detect_language(np.zeros(int(30.5 * tr.SAMPLE_RATE), np.float32))
+    assert seen == [tr.CHUNK_S * tr.SAMPLE_RATE]

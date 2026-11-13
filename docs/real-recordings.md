@@ -338,3 +338,30 @@ Math-variable guard for "i" (2 cases), vocabulary term variants and "cloud code"
 - **Sound-alike errors** (the most annoying error type): large-v3 144 errors against turbo's 131 and 2.5x slower (fixes 14 sound-alikes, adds 17); a German LM over fixed pairs (das/dass, noch/auch ...) finds only 5 pair errors in the current transcripts; prompt variants stay within the noise; forcing each chunk's detected language gives identical text; casing and chunk-break rules lose more than they gain. The errors are spread over many different words: more recordings of them are the next step.
 - **Incremental live VAD:** no gain over the current one.
 - **NPU retry:** "device lost" at the first inference; retry after a Windows restart.
+
+## Seventh round: experiments and decisions (2026-11-13)
+
+Opus, Sonnet and Haiku subagents; accuracy runs partly shared the iGPU (timings marked as noisy).
+
+### Built (committed 2026-11-13)
+
+- **Prompt only for German and English** ([transcription.md](transcription.md#decoding)): the German+English prompt sentence made Whisper translate other languages into English even when it detected them correctly (FLEURS fr 76.8% -> 4.7%, es 54.6 -> 2.8, pt 54.0 -> 4.0, ja CER 69.6 -> 3.9, nl 19.2 -> 9.3, pl 16.2 -> 5.4, it 8.4 -> 2.4; de/en, the 24 recordings (128) and the corpus identical). Short-chunk guard (4 s or same language as the previous chunk) against short German/English heard as Russian/Korean.
+- **Chunks never exceed 30 s**: with the 0.5 s lead-in a chunk reached 30.5 s, and OpenVINO GenAI decodes the overflow as a second window that can invent text; `generate(max_new_tokens=1)` (language detection) never returns on audio just over 30 s. 24 recordings 128 -> 126, the trailing "Vielen Dank." gone.
+- **No space in a new empty paragraph** (claude.ai, Claude app): [interface.md](interface.md#spacing-at-the-insertion-point).
+
+### Measured, rejected
+
+| Idea | Result |
+|---|---|
+| Beam search on the iGPU (own implementation on the stateful decoder IR, no torch; kept in git stash "Beam search on OpenVINO, rejected 2026-11-13") | 24 recordings 128 -> 126 (noise), FLEURS de+en 168 -> 165, sound-alikes 11 fixed / 11 new, ~1.9x GPU time. The earlier -7% (Optimum, 131 -> 122) did not reproduce. |
+| Sampling several decodes and reranking | GenAI returns no usable scores (always 1.0); sampled outputs equal greedy. |
+| fp16 instead of int8 | fast set (8 recordings) 70 -> 70, FLEURS de 3.94 -> 4.15%. Precision is not the cause of sound-alikes. |
+| Two passes (first-pass text as prompt) | 70 -> 220: the model treats the prompt as already spoken and stops early (42 words -> 1). |
+| Longer chunks | the app already sends median 21 s, max 30 s; ~1% of speech is in chunks < 10 s. |
+| Learning from the user's corrections (read back the pasted span via UIA, add corrected words to the vocabulary) | feasible (Chromium, RichEdit; ~1 ms), rejected by the author: the vocabulary would keep growing, and both words of a sound-alike pair are used in different contexts, so favouring one hurts in practice. |
+| Research (OpenVINO 2026.4.1, 2026 models, decoding papers) | no GPU beam search in GenAI; no model clearly better than turbo on German at similar cost; Cohere Transcribe 2B is the candidate. |
+
+### Open
+
+- **Microphone path**: this laptop's microphone runs the Elevoc AI voice-separation effect (and Windows mixes 4 channels to 1 and resamples 48 -> 16 kHz). Speech enhancement is known to hurt Whisper. A WASAPI raw-mode recorder and a script that records one take through both paths at once are prototyped (branch exp/rawmic); the A/B recording is pending.
+- Previous-chunk context (last sentence, same language): not finished; only matters for long dictations.

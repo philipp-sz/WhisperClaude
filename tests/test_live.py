@@ -187,3 +187,12 @@ def test_live_without_a_detector_does_no_detection():
     live = t.LiveTranscription(fake_model)
     live.feed(audio)
     assert live.finish(audio) == "w1 w2 w3 w4"
+
+
+def test_chunks_never_exceed_30_s_even_with_lead_in():
+    """OpenVINO GenAI splits audio > 30 s into a second window (tiny: invented text)."""
+    audio = np.concatenate([np.full(int(29.8 * SR), 1, np.float32), np.zeros(3 * SR, np.float32),
+                            np.full(5 * SR, 2, np.float32)])
+    chunks = t.speech_chunks(audio)
+    assert len(chunks) == 2 and all(len(c) <= t.CHUNK_S * SR for c in chunks)
+    assert len(chunks[0]) == t.CHUNK_S * SR # lead-in shortened to fit

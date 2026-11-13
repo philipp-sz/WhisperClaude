@@ -43,6 +43,8 @@ def test_vocabulary_list_becomes_tuple(tmp_path):
     ('[model]\ndevice = "npu"', "device must be"),
     ('[model]\nname = "small"', "unknown key 'name'"), # renamed to cpu_model
     ('[model]\nlanguage = "deu"', "language"),
+    ('[model]\nprompt_languages = ["de", "xx"]', "prompt_languages"),
+    ('[model]\nprompt_languages = []', "prompt_languages"),
     ('[hotkey]\nkey = "ctrl_x"', "unknown key"),
     ('[hotkey]\nmax_hold_s = 10', "max_hold_s"),
     ('[paste]\nrestore_delay = 1', "unknown key 'restore_delay'"),

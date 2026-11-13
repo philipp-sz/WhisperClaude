@@ -20,7 +20,8 @@ from faster_whisper import BatchedInferencePipeline, WhisperModel
 from huggingface_hub import snapshot_download
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 
-from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY, SAMPLE_RATE # noqa: F401 (re-exported)
+from whisperclaude.constants import ( # noqa: F401 (re-exported)
+    DEFAULT_PROMPT, DEFAULT_PROMPT_LANGUAGES, DEFAULT_VOCABULARY, SAMPLE_RATE)
 from whisperclaude.system import cuda_available, free_vram_mb, load_cuda_libraries
 from whisperclaude.textfix import join_chunks
 
@@ -69,6 +70,58 @@ def build_prompt(prompt: str | None, vocabulary: Sequence[str] = ()) -> str | No
     if not words:
         return prompt or None
     return f"{prompt} {words}." if prompt else f"{words}."
+
+
+# speech below this drops the prompt sentence only for a language already heard (PromptByLanguage)
+MIN_SWITCH_S = 4.0
+
+
+class PromptByLanguage:
+    """The prompt sentence only for the languages it is written in (`prompt_languages`).
+
+    With the German+English sentence, Whisper translated other languages into English (FLEURS:
+    French 77 %, Spanish 55 % word errors), even with the chunk's language forced. Chunks in
+    another language get only the vocabulary as prompt. Whisper's own language for the chunk
+    decides: no extra detection pass.
+    """
+
+    initial_prompt: str | None = None
+    other_prompt: str | None = None # for chunks in a language the prompt is not written in
+    prompt_languages: tuple[str, ...] = DEFAULT_PROMPT_LANGUAGES
+    language: str | None = None # fixed language; None = auto-detect
+    # language of the last chunk, kept across dictations: OpenVINO picks the first prompt by it.
+    # Reset per dictation, every French dictation cost two decodes (FLEURS fr: 6.3 s instead of
+    # 2.9 s GPU per audio minute); kept, only a language switch costs the second one.
+    _heard: str | None = None
+    MIN_SWITCH_S = MIN_SWITCH_S
+
+    def _set_prompts(self, prompt: str | None, vocabulary: Sequence[str],
+                     prompt_languages: Sequence[str]) -> None:
+        self.initial_prompt = build_prompt(prompt, vocabulary)
+        self.other_prompt = build_prompt(None, vocabulary)
+        self.prompt_languages = tuple(prompt_languages)
+
+    def _prompt(self, language: str | None) -> str | None:
+        """The prompt for speech in `language` (None: not known yet)."""
+        return (self.initial_prompt if not language or language in self.prompt_languages
+                else self.other_prompt)
+
+    def _trusted(self, language: str | None, seconds: float) -> str | None:
+        """The language Whisper heard in a chunk of `seconds`, or None (unknown: the prompt
+        sentence stays) if the chunk is shorter than MIN_SWITCH_S and the language is neither a
+        prompt language nor the previous chunk's. German and English cut to 1-3 s were heard as
+        Russian or Korean in 3.6 % of 507 pieces: with the sentence Whisper still wrote them in
+        Latin script, decoded as Russian or Korean it wrote Cyrillic or Hangul."""
+        if (not language or language in self.prompt_languages or language == self._heard
+                or seconds >= self.MIN_SWITCH_S):
+            return language or None
+        return None
+
+    def _forced(self, language: str | None) -> str | None:
+        """The language to force when decoding a chunk heard (and trusted) as `language`: only
+        outside the prompt languages (inside them Whisper detects, as with mixed audio)."""
+        return (language if not self.language and self._prompt(language) != self.initial_prompt
+                else None)
 
 
 VAD_LEVEL_DBFS = -26.0 # quiet audio is raised to this RMS level, for the VAD only
@@ -149,8 +202,12 @@ def _join(audio: np.ndarray, group: list[dict]) -> np.ndarray:
     """The group's speech, after LEAD_IN_S of silence: a chunk that starts right on a word
     made Whisper skip its first words (130 mid-sentence cuts of the test corpus: 13 % lost 3+
     words, 5 % with 0.3-0.5 s of silence first). Free: Whisper pads every chunk to 30 s."""
-    lead = np.zeros(int(LEAD_IN_S * SAMPLE_RATE), np.float32)
-    return np.concatenate([lead] + [audio[s["start"]:s["end"]] for s in group])
+    speech = [audio[s["start"]:s["end"]] for s in group]
+    # Never past 30 s: OpenVINO GenAI splits longer audio into windows (a 0.5 s second window
+    # invents text such as "Thank you."), so a full chunk gets a shorter lead-in.
+    room = CHUNK_S * SAMPLE_RATE - sum(len(x) for x in speech)
+    lead = np.zeros(max(0, min(int(LEAD_IN_S * SAMPLE_RATE), room)), np.float32)
+    return np.concatenate([lead] + speech)
 
 
 def speech_chunks(audio: np.ndarray, detect: Detect | None = None) -> list[np.ndarray]:
@@ -237,7 +294,7 @@ class LiveTranscription:
         return join_chunks(self._texts)
 
 
-class Transcriber:
+class Transcriber(PromptByLanguage):
     """faster-whisper on the CPU.
 
     Defaults come from the benchmarks in docs/transcription.md: small, greedy decoding, 4 threads
@@ -256,10 +313,11 @@ class Transcriber:
         initial_prompt: str | None = DEFAULT_PROMPT,
         batch_size: int = 4,
         vocabulary: Sequence[str] = (),
+        prompt_languages: Sequence[str] = DEFAULT_PROMPT_LANGUAGES,
     ) -> None:
         self.beam_size = beam_size
         self.language = language # None = auto-detect
-        self.initial_prompt = build_prompt(initial_prompt, vocabulary)
+        self._set_prompts(initial_prompt, vocabulary, prompt_languages)
         self.batch_size = batch_size
         kwargs = dict(device="cpu", compute_type=compute_type, cpu_threads=cpu_threads)
         try: # cached model: no network request at startup (private, works offline)
@@ -271,15 +329,7 @@ class Transcriber:
     def transcribe_detailed(self, audio: np.ndarray) -> tuple[str, str]:
         """Return (text, detected_language) for a 1-D float32 array at 16 kHz."""
         audio = np.asarray(audio, dtype=np.float32).reshape(-1)
-        segments, info = self.pipeline.transcribe(
-            audio,
-            language=self.language,
-            beam_size=self.beam_size,
-            batch_size=self.batch_size,
-            initial_prompt=self.initial_prompt,
-            without_timestamps=True,
-            vad_filter=True,
-        )
+        segments, info = self._pipeline_transcribe(audio, vad_filter=True)
         # segments is a lazy generator: the actual decoding happens here.
         text = join_chunks(s.text for s in segments)
         return text, info.language
@@ -293,17 +343,27 @@ class Transcriber:
         if not chunks:
             return ""
         bounds = np.cumsum([0] + [len(c) for c in chunks]) / SAMPLE_RATE
-        segments, _ = self.pipeline.transcribe(
+        segments, _ = self._pipeline_transcribe(
             np.concatenate(chunks).astype(np.float32),
-            language=self.language,
-            beam_size=self.beam_size,
-            batch_size=self.batch_size,
-            initial_prompt=self.initial_prompt,
-            without_timestamps=True,
             clip_timestamps=[{"start": float(a), "end": float(b)}
                              for a, b in zip(bounds[:-1], bounds[1:])],
         )
         return join_chunks(s.text for s in segments)
+
+    def _pipeline_transcribe(self, audio: np.ndarray, **kwargs: object):
+        """The batched pipeline with the prompt for the detected language. It detects before
+        decoding (segments are lazy), so another language costs a second detection, not a
+        second decode."""
+        def run(language: str | None):
+            return self.pipeline.transcribe(
+                audio, language=language, beam_size=self.beam_size, batch_size=self.batch_size,
+                initial_prompt=self._prompt(language), without_timestamps=True, **kwargs)
+        segments, info = run(self.language)
+        heard = self._trusted(info.language, len(audio) / SAMPLE_RATE)
+        if self._forced(heard):
+            segments, info = run(heard)
+        self._heard = heard
+        return segments, info
 
     def live(self) -> LiveTranscription:
         return LiveTranscription(self.transcribe_chunks)
@@ -337,7 +397,7 @@ def gpu_available() -> bool:
     return intel_gpu() is not None
 
 
-class OpenVinoTranscriber:
+class OpenVinoTranscriber(PromptByLanguage):
     """Whisper on an OpenVINO device (the iGPU). Same chunking/prompt as the CPU path."""
 
     def __init__(
@@ -348,12 +408,13 @@ class OpenVinoTranscriber:
         initial_prompt: str | None = DEFAULT_PROMPT,
         vocabulary: Sequence[str] = (),
         on_status: Callable[[str], None] = lambda s: None,
+        prompt_languages: Sequence[str] = DEFAULT_PROMPT_LANGUAGES,
     ) -> None:
         import openvino_genai # deferred: optional (CUDA/CPU machines), ~205 ms
 
         self.device = device
         self.language = language
-        self.initial_prompt = build_prompt(initial_prompt, vocabulary)
+        self._set_prompts(initial_prompt, vocabulary, prompt_languages)
         repo = ov_repo(model)
         try: # cached: no network request at startup
             path = snapshot_download(repo, local_files_only=True)
@@ -370,30 +431,43 @@ class OpenVinoTranscriber:
         silence = np.zeros(SAMPLE_RATE, np.float32)
         speech_chunks(silence)
         self._generate([silence])
+        self._heard = None # not the warmup's guess for silence
 
-    def _config(self, repetition_penalty: float = 1.0):
+    def _config(self, repetition_penalty: float = 1.0, language: str | None = None,
+                guess: str | None = None):
+        """language: force this one (default: the configured one, else Whisper detects);
+        guess: the language to pick the prompt for when Whisper detects."""
+        language = language or self.language
         cfg = self.pipeline.get_generation_config()
         cfg.task = "transcribe"
         cfg.return_timestamps = False
-        cfg.initial_prompt = self.initial_prompt
+        cfg.initial_prompt = self._prompt(language or guess)
         cfg.repetition_penalty = repetition_penalty
-        if self.language:
-            cfg.language = f"<|{self.language}|>"
+        if language:
+            cfg.language = f"<|{language}|>"
         return cfg
 
     def _generate(self, chunks: list[np.ndarray]) -> tuple[str, str]:
-        cfg = self._config()
+        """Each chunk is decoded with the prompt for the language of the chunk before (Whisper
+        detects the language before it reads the prompt) and decoded again only if the
+        prompt was the wrong one (PromptByLanguage): a language switch costs one more decode."""
         texts, language = [], ""
         for chunk in chunks:
-            result = self.pipeline.generate(chunk, cfg)
+            guess = self._heard
+            result = self.pipeline.generate(chunk, self._config(guess=guess))
+            detected = str(result.language or "").strip("<|>")
+            heard = self._trusted(detected, len(chunk) / SAMPLE_RATE - LEAD_IN_S)
+            if not self.language and self._prompt(heard) != self._prompt(guess):
+                result = self.pipeline.generate(chunk, self._config(language=self._forced(heard)))
+            self._heard = heard
             text = result.texts[0].strip()
             if is_loop(text, len(chunk) / SAMPLE_RATE):
-                text = self._decode_again(chunk)
+                text = self._decode_again(chunk, heard)
             texts.append(text)
-            language = language or str(result.language or "").strip("<|>")
+            language = language or detected
         return join_chunks(texts), language
 
-    def _decode_again(self, chunk: np.ndarray) -> str:
+    def _decode_again(self, chunk: np.ndarray, language: str | None = None) -> str:
         """A chunk that came out as a repetition loop, decoded again with a repetition penalty.
 
         Greedy decoding can't leave a loop once a repeat is the likeliest next token. The penalty
@@ -402,7 +476,8 @@ class OpenVinoTranscriber:
         but is not implemented on the iGPU. Only looped chunks pay for it. If the retry loops
         too, the repeats are collapsed, so no speech around the loop is dropped.
         """
-        text = self.pipeline.generate(chunk, self._config(RETRY_PENALTY)).texts[0].strip()
+        text = self.pipeline.generate(
+            chunk, self._config(RETRY_PENALTY, self._forced(language))).texts[0].strip()
         looped = is_loop(text, len(chunk) / SAMPLE_RATE)
         log.warning("repetition loop in a %.0f s chunk; decoded again with a repetition penalty%s",
                     len(chunk) / SAMPLE_RATE, ", still looping: repeats collapsed" if looped else "")
@@ -412,6 +487,7 @@ class OpenVinoTranscriber:
         """Spoken language of a short piece of audio: one encoder pass, no decoding."""
         cfg = self.pipeline.get_generation_config()
         cfg.task, cfg.return_timestamps, cfg.max_new_tokens = "transcribe", False, 1
+        audio = audio[-CHUNK_S * SAMPLE_RATE:] # > 30 s: generate(max_new_tokens=1) never returns
         return str(self.pipeline.generate(audio, cfg).language or "")
 
     def transcribe_detailed(self, audio: np.ndarray) -> tuple[str, str]:
@@ -479,11 +555,12 @@ class CudaTranscriber(OpenVinoTranscriber):
         on_status: Callable[[str], None] = lambda s: None,
         compute_type: str = "auto",
         beam_size: int = 0,
+        prompt_languages: Sequence[str] = DEFAULT_PROMPT_LANGUAGES,
     ) -> None:
         """model / compute_type "auto": by free VRAM (cuda_choice); beam_size 0: CUDA_BEAM."""
         load_cuda_libraries()
         self.language = language
-        self.initial_prompt = build_prompt(initial_prompt, vocabulary)
+        self._set_prompts(initial_prompt, vocabulary, prompt_languages)
         self.beam_size = beam_size or CUDA_BEAM
         free = free_vram_mb()
         model, auto_compute = cuda_choice(model, free)
@@ -505,13 +582,20 @@ class CudaTranscriber(OpenVinoTranscriber):
     def _generate(self, chunks: list[np.ndarray]) -> tuple[str, str]:
         texts, language = [], ""
         for chunk in chunks:
-            segments, info = self.model.transcribe(
-                chunk, language=self.language, beam_size=self.beam_size,
-                initial_prompt=self.initial_prompt, without_timestamps=True,
-                condition_on_previous_text=False)
+            segments, info = self._transcribe(chunk, self.language)
+            heard = self._trusted(info.language, len(chunk) / SAMPLE_RATE)
+            if self._forced(heard): # lazy segments: costs a detection, not a decode
+                segments, info = self._transcribe(chunk, heard)
+            self._heard = heard
             texts.append(join_chunks(s.text for s in segments))
             language = language or info.language
         return join_chunks(texts), language
+
+    def _transcribe(self, chunk: np.ndarray, language: str | None):
+        return self.model.transcribe(
+            chunk, language=language, beam_size=self.beam_size,
+            initial_prompt=self._prompt(language), without_timestamps=True,
+            condition_on_previous_text=False)
 
     def detect_language(self, audio: np.ndarray) -> str:
         return self.model.detect_language(np.asarray(audio, dtype=np.float32))[0]
@@ -526,6 +610,7 @@ def create_transcriber(
     initial_prompt: str | None = DEFAULT_PROMPT,
     vocabulary: Sequence[str] = (),
     beam_size: int = 0,
+    prompt_languages: Sequence[str] = DEFAULT_PROMPT_LANGUAGES,
     **cpu_kwargs: object,
 ) -> Transcriber | OpenVinoTranscriber:
     """device "auto" / "gpu": NVIDIA GPU (CUDA) if there is one, else the Intel iGPU
@@ -534,7 +619,8 @@ def create_transcriber(
     beam_size 0 = auto: 5 on CUDA, 1 on the CPU (the iGPU pipeline only decodes greedily).
     gpu_model "auto": by free VRAM on CUDA (cuda_choice), large-v3-turbo on the iGPU, where
     large-v3 was 4x slower at the same accuracy."""
-    common = dict(language=language, initial_prompt=initial_prompt, vocabulary=vocabulary)
+    common = dict(language=language, initial_prompt=initial_prompt, vocabulary=vocabulary,
+                  prompt_languages=prompt_languages)
     if device in ("auto", "gpu", "cuda"):
         cuda = _cuda_transcriber(gpu_model, on_status, beam_size, common)
         if cuda is not None:

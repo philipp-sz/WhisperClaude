@@ -26,6 +26,9 @@ language = ""         # "" = auto-detect (any of Whisper's ~100 languages), or l
 # several languages it also keeps mixed audio from being translated into one of them.
 # This default is for German + English.
 initial_prompt = "Hallo, das ist ein Test. Okay, so let's see how this works, and then we'll decide."
+# The languages the prompt above is written in. Speech in any other language is transcribed
+# without the prompt (with it, Whisper translated e.g. French into English).
+prompt_languages = ["de", "en"]
 # Words Whisper should spell exactly as written (names, products, technical terms).
 # Fixed in tests: "Klot" -> "Claude", "Gmini" -> "Gemini"; "cloud" + "Claude" together work.
 # Keep the list short (it shares ~220 tokens with the prompt).

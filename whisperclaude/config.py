@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from whisperclaude.hotkey import parse_key
-from whisperclaude.constants import DEFAULT_PROMPT, DEFAULT_VOCABULARY, WHISPER_LANGUAGES
+from whisperclaude.constants import (DEFAULT_PROMPT, DEFAULT_PROMPT_LANGUAGES, DEFAULT_VOCABULARY,
+                                     WHISPER_LANGUAGES)
 from whisperclaude.languages import SOURCE_CODES
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
@@ -58,6 +59,7 @@ class ModelConfig:
     batch_size: int = 4
     language: str = "" # "" = auto-detect (any of Whisper's languages), else e.g. "de"
     initial_prompt: str = DEFAULT_PROMPT
+    prompt_languages: tuple[str, ...] = DEFAULT_PROMPT_LANGUAGES # the languages initial_prompt is in
     vocabulary: tuple[str, ...] = DEFAULT_VOCABULARY # words Whisper should spell exactly
 
     def __post_init__(self) -> None:
@@ -71,6 +73,9 @@ class ModelConfig:
         _check(0 <= self.beam_size <= 32, "[model] beam_size must be 0 (auto) or 1–32")
         _check(self.language == "" or self.language in WHISPER_LANGUAGES,
                '[model] language must be "" (auto) or a Whisper language code, e.g. "de", "fr"')
+        _check(bool(self.prompt_languages)
+               and all(c in WHISPER_LANGUAGES for c in self.prompt_languages),
+               '[model] prompt_languages must be one or more Whisper language codes, e.g. ["de", "en"]')
 
 
 @dataclass(frozen=True)

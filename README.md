@@ -35,9 +35,10 @@ Autostart registers two Task Scheduler tasks without admin rights. One starts th
 
 All settings are in [`config.toml`](config.toml) in the project folder. Each key is commented and optional. The tray menu entry "Settings (config.toml)" opens the file. "Restart to apply settings" applies changes.
 
-The default prompt is written for German and English. For other languages, three keys should be set before the first dictation:
+The default prompt is written for German and English. For other languages, four keys should be set before the first dictation:
 
 - `[model] initial_prompt`: one short, correctly punctuated sentence per dictation language. Whisper copies its punctuation and casing. With two languages it also keeps mixed speech from being translated into one language.
+- `[model] prompt_languages`: the languages that sentence is written in. Speech in any other language is transcribed without it, since Whisper otherwise translated it into English.
 - `[translation] my_languages`: the languages the user writes in, most used first. They decide the source language of short texts such as "Gracias". If the list is empty, the app uses the Windows display language, the keyboard layouts and English.
 - `[model] vocabulary`: names and terms Whisper should spell exactly.
 
@@ -46,6 +47,7 @@ Example for Spanish and English:
 ```toml
 [model]
 initial_prompt = "Hola, esto es una prueba. Okay, so let's see how this works, and then we'll decide."
+prompt_languages = ["es", "en"]
 vocabulary = ["GitHub", "Kubernetes"]
 
 [translation]

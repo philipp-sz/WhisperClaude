@@ -120,6 +120,7 @@ On the author's clips the vote with Whisper as pivot makes 10 errors against Whi
 
 ## State and open decisions
 
+- **Decision 2026-11-13 (the author):** no language-specific fine-tunes (for example German Whisper fine-tunes): the app must work well for everyone. A bigger, somewhat slower general model is acceptable if it is notably more accurate (transcription is now fast enough to spend some time; not 10 s or more). Next candidate: Cohere Transcribe 2B (14 languages, English leaderboard 5.42 vs 7.44 for large-v3; gated repository, the author will log in; German and mixed-language behaviour unknown).
 - **Update 2026-11-11, real recordings** ([real-recordings.md](real-recordings.md)): on 24 free-speech recordings Whisper turbo is the most accurate (4.7%), Parakeet 5.3%, Granite 7.8%; the vote gains only 4 errors (143 against 147). The Parakeet runtime and the vote are not worth building; the points below are superseded where they disagree.
 - **Removed 2026-11-11:** the Granite engine (`granite.py`, `granite_frontend.py`, its install and conversion scripts, tests, the `[model] engine` key) and `vote.py` left the code: Granite was worse than turbo on the author's speech (7.8% against 4.7%), and on the NPU it would only beat the CPU fallback slightly while needing its own 1 GB install. Everything is in the git stash "Granite engine and vote, removed 2026-11-11" (`git stash list`, `git stash apply stash@{N}`). Granite and Parakeet can still be compared through the PyTorch bridge (`scripts/real_eval.py run granite parakeet`).
 

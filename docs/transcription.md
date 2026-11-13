@@ -107,7 +107,35 @@ Three real dictations with pauses (German 63 s, English 60 s, mixed 33 s), faste
 | D: no timestamps and prompt | Good punctuation, boundary errors beyond 30 s. |
 | E: VAD chunks, no timestamps, prompt (chosen) | Complete and punctuated, languages kept. Same speed as A. |
 
-Whisper was trained on subtitles. With timestamps it splits text at pauses and capitalizes each line. A punctuated bilingual prompt ("Hallo, das ist ein Test. Okay, so let's see how this works…") sets the punctuation style and keeps mixed audio from being translated. A custom vocabulary is appended to the prompt. Faster-whisper's `hotwords` fixed the same words but dropped commas.
+Whisper was trained on subtitles. With timestamps it splits text at pauses and capitalizes each line. A punctuated bilingual prompt ("Hallo, das ist ein Test. Okay, so let's see how this works…") sets the punctuation style and keeps mixed audio from being translated (only for chunks in the prompt's languages, see below). A custom vocabulary is appended to the prompt. Faster-whisper's `hotwords` fixed the same words but dropped commas.
+
+Prompt only for its own languages (2026-11-13): with the German+English sentence, Whisper translated other languages into English, even with the right language token forced. Since then the sentence is used only for chunks Whisper hears in one of `[model] prompt_languages` (default `["de", "en"]`). Other chunks get only the vocabulary as prompt. Whisper's own language decision picks the prompt, so there is no extra detection pass. The iGPU decodes a chunk with the prompt for the previous chunk's language (kept across dictations) and decodes it again only if the heard language needs the other prompt; the CPU and CUDA paths detect before decoding and only repeat the detection. FLEURS dev, 50 sentences per language, app path on the iGPU (turbo int8), word errors (Japanese: character errors), GPU time per audio minute:
+
+| Set | Before | Prompt by language | GPU s/min before → after |
+|---|---|---|---|
+| French | 76.8% | 4.7% | 2.60 → 2.94 |
+| Spanish | 54.6% | 2.8% | 2.44 → 2.48 |
+| Japanese (CER) | 69.6% | 3.9% | 3.27 → 2.50 |
+| German | 4.0% | 4.0% | 3.08 → 2.44 |
+| English | 4.0% | 4.0% | 3.15 → 2.74 |
+| German + 2 s pause + French, both orders (20 dictations) | 43.9% | 8.0% | 4.0 → 5.9 generate calls per dictation |
+
+Earlier run (same rule): Portuguese 54.0% → 4.0%, Dutch 19.2% → 9.3%, Polish 16.2% → 5.4%, Italian 8.4% → 2.4%; the author's 24 recordings and the corpus unchanged. Timing differences on single-language sets are noise (one decode per chunk on both). Resetting the remembered language at every dictation doubled the time of every French dictation (6.3 s per audio minute), so it is kept. CPU path (faster-whisper `small`, 10 sentences each): small did not translate French with the sentence (12.0% → 11.2%), German unchanged (7.5%). The CUDA path uses the same rule but was not measured.
+
+Short chunks (2026-11-13): German and English cut to 1-3 s (the author's recordings, 507 pieces) were heard as another language in 18 pieces (3.6%; 7% at 1 s, 2% at 3 s; mostly Russian and Korean, once each Dutch, Portuguese, French). With the sentence, Whisper still wrote them in Latin script, 34 of 63 words right; decoded again in the heard language, 0 of 46 right (Cyrillic, Hangul, or other words). So a chunk under 4 s of speech (`MIN_SWITCH_S`) heard outside `prompt_languages` counts as "language unknown" and keeps its first decode with the sentence, unless the previous chunk was heard in that language. Rejected: 3 s (the two 3 s pieces, Korean and Dutch, stay broken); keeping the first decode only when it is not in the heard language's script (fixes Russian and Korean, not the Dutch, Portuguese and French ones, which are Latin script either way). Cost: a short dictation in another language right after German or English is decoded as before this change; from its second chunk on the language is trusted. Short foreign speech is the reason for the cost: cut to the first 1-3 s of a sentence (8 FLEURS clips per language), forcing the heard language and dropping the sentence gives far more words of the output found in the reference than main (words found / words output):
+
+| Language, length | Main | Forced language |
+|---|---|---|
+| French 1 s | 0/23 | 16/21 |
+| French 2 s | 8/51 | 41/49 |
+| French 3 s | 18/72 | 72/79 |
+| Spanish 2 s | 16/40 | 38/42 |
+| Russian 2 s | 5/48 | 33/37 |
+| Russian 3 s | 17/58 | 53/58 |
+| Korean 2 s | 18/104 | 91/99 |
+| Korean 3 s | 64/151 | 117/126 |
+
+The guard keeps main's output for a first short foreign chunk after German or English, so this gain applies only from the second chunk on or for chunks of 4 s and more.
 
 Beam search on the iGPU (2026-11-12): OpenVINO GenAI 2026.4 refuses `num_beams > 1` on the GPU ("Not Implemented") and `num_return_sequences > 1`. Optimum Intel (`OVModelForSpeechSeq2Seq`, Hugging Face's own `generate()` on the same OpenVINO model) does run beam search on the iGPU: on the author's 24 recordings 131 errors greedy (app), 127 with 2 beams, 122 with 4 (−7%, fewer deletions and insertions, names and sound-alikes unchanged), but 2.7 times slower per chunk and with torch and transformers (1.4 GB) as dependencies. Not adopted. Details in [real-recordings.md](real-recordings.md#fourth-round-experiments-and-decisions-2026-11-12).
 

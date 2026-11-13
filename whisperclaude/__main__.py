@@ -134,6 +134,7 @@ def create_from_config(m: ModelConfig, on_status=lambda text: None):
     return create_transcriber(
         device=m.device, gpu_model=m.gpu_model, cpu_model=m.cpu_model, on_status=on_status,
         language=m.language or None, initial_prompt=m.initial_prompt or None,
+        prompt_languages=m.prompt_languages,
         vocabulary=m.vocabulary, compute_type=m.compute_type, beam_size=m.beam_size,
         cpu_threads=m.cpu_threads, batch_size=m.batch_size,
     )
