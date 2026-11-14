@@ -9,6 +9,7 @@
 | [real-recordings.md](real-recordings.md) | Evaluation on the author's own free speech (2026-11-11): engines, votes, error types, GPU fallback, VAD, NPU, ideas and backlog |
 | [translation.md](translation.md) | Translate key, language picker, translation model comparison, language detection |
 | [interface.md](interface.md) | Status pill rendering and level meter, tray icon, clipboard and history |
+| [ideas.md](ideas.md) | Collected ideas (2026-11-14), not yet discussed: text-to-text improvement, faster engines, multi-model harness, mute key, distribution |
 
 The measurements come from two machines:
 

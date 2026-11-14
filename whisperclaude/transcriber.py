@@ -12,6 +12,7 @@ import os
 import re
 import time
 import zlib
+from functools import lru_cache
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -40,6 +41,28 @@ LOOP_WORDS_PER_S = 6.0 # speech has at most ~4 words/s (measured 3.5); only abov
 LOOP_MIN_WORDS = 20
 RETRY_PENALTY = 1.1 # logits of tokens already produced are divided by this in the retry
 _REPEATS = re.compile(r"\b(\S+(?:\s+\S+){0,3}?)(?:\s+\1\b){3,}")
+
+
+GUARD_MIN_WORDS = 6 # shorter texts carry too little signal for the language check
+GUARD_MIN_PROB = 0.9 # the text's language must be this certain to override Whisper's language token
+
+
+@lru_cache(maxsize=4)
+def _identifier(languages: tuple[str, ...]):
+    """py3langid restricted to `languages` (~0.5 s to load, once). Deferred import: only the
+    language guard needs it, and the translator loads it anyway."""
+    from py3langid.langid import MODEL_FILE, LanguageIdentifier
+    identifier = LanguageIdentifier.from_model_file(MODEL_FILE, norm_probs=True)
+    identifier.set_languages(list(languages))
+    return identifier
+
+
+def text_language(text: str, languages: Sequence[str]) -> str | None:
+    """Which of `languages` the text is written in, or None if too short or not clear."""
+    if len(languages) < 2 or len(text.split()) < GUARD_MIN_WORDS:
+        return None
+    lang, prob = _identifier(tuple(languages)).classify(text)
+    return lang if prob >= GUARD_MIN_PROB else None
 
 
 def is_loop(text: str, seconds: float) -> bool:
@@ -116,6 +139,11 @@ class PromptByLanguage:
                 or seconds >= self.MIN_SWITCH_S):
             return language or None
         return None
+
+    def _wrong_language(self, heard: str | None, text: str) -> bool:
+        """True if Whisper heard a prompt language but wrote the text in the other one."""
+        return (bool(heard) and not self.language and heard in self.prompt_languages
+                and text_language(text, self.prompt_languages) not in (None, heard))
 
     def _forced(self, language: str | None) -> str | None:
         """The language to force when decoding a chunk heard (and trusted) as `language`: only
@@ -434,14 +462,15 @@ class OpenVinoTranscriber(PromptByLanguage):
         self._heard = None # not the warmup's guess for silence
 
     def _config(self, repetition_penalty: float = 1.0, language: str | None = None,
-                guess: str | None = None):
+                guess: str | None = None, sentence: bool = True):
         """language: force this one (default: the configured one, else Whisper detects);
-        guess: the language to pick the prompt for when Whisper detects."""
+        guess: the language to pick the prompt for when Whisper detects; sentence: False
+        drops the prompt sentence (vocabulary only)."""
         language = language or self.language
         cfg = self.pipeline.get_generation_config()
         cfg.task = "transcribe"
         cfg.return_timestamps = False
-        cfg.initial_prompt = self._prompt(language or guess)
+        cfg.initial_prompt = self._prompt(language or guess) if sentence else self.other_prompt
         cfg.repetition_penalty = repetition_penalty
         if language:
             cfg.language = f"<|{language}|>"
@@ -461,11 +490,26 @@ class OpenVinoTranscriber(PromptByLanguage):
                 result = self.pipeline.generate(chunk, self._config(language=self._forced(heard)))
             self._heard = heard
             text = result.texts[0].strip()
+            if self._wrong_language(heard, text):
+                text = self._language_guard(chunk, heard, text)
             if is_loop(text, len(chunk) / SAMPLE_RATE):
                 text = self._decode_again(chunk, heard)
             texts.append(text)
             language = language or detected
         return join_chunks(texts), language
+
+    def _language_guard(self, chunk: np.ndarray, heard: str, text: str) -> str:
+        """Whisper heard `heard` (language token, probability > 0.99 in every case seen) but wrote
+        the text in another prompt language: the English half of the prompt sentence pulled a
+        German chunk into English (an 80 Hz high-pass or -16 LUFS on the input, one passage per
+        recording; 32-46 errors). The chunk is decoded again without the sentence, forced to the
+        heard language, and kept if that text is in the heard language. Real switches pass:
+        token and text agree."""
+        again = self.pipeline.generate(chunk, self._config(language=heard, sentence=False)).texts[0].strip()
+        ok = not self._wrong_language(heard, again)
+        log.warning("chunk heard as %s but written in another language; decoded again without the "
+                    "prompt sentence%s", heard, "" if ok else ", still wrong: first text kept")
+        return again if ok else text
 
     def _decode_again(self, chunk: np.ndarray, language: str | None = None) -> str:
         """A chunk that came out as a repetition loop, decoded again with a repetition penalty.
@@ -587,14 +631,21 @@ class CudaTranscriber(OpenVinoTranscriber):
             if self._forced(heard): # lazy segments: costs a detection, not a decode
                 segments, info = self._transcribe(chunk, heard)
             self._heard = heard
-            texts.append(join_chunks(s.text for s in segments))
+            text = join_chunks(s.text for s in segments)
+            if self._wrong_language(heard, text): # see OpenVinoTranscriber._language_guard
+                again = join_chunks(s.text for s in self._transcribe(chunk, heard, sentence=False)[0])
+                log.warning("chunk heard as %s but written in another language; decoded again "
+                            "without the prompt sentence", heard)
+                text = text if self._wrong_language(heard, again) else again
+            texts.append(text)
             language = language or info.language
         return join_chunks(texts), language
 
-    def _transcribe(self, chunk: np.ndarray, language: str | None):
+    def _transcribe(self, chunk: np.ndarray, language: str | None, sentence: bool = True):
         return self.model.transcribe(
             chunk, language=language, beam_size=self.beam_size,
-            initial_prompt=self._prompt(language), without_timestamps=True,
+            initial_prompt=self._prompt(language) if sentence else self.other_prompt,
+            without_timestamps=True,
             condition_on_previous_text=False)
 
     def detect_language(self, audio: np.ndarray) -> str:

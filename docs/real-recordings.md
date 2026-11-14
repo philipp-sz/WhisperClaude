@@ -364,4 +364,43 @@ Opus, Sonnet and Haiku subagents; accuracy runs partly shared the iGPU (timings 
 
 ### Open
 
-- Previous-chunk context (last sentence, same language): not finished; only matters for long dictations.
+- Previous-chunk context (last sentence, same language): measured 2026-11-14, 126 -> 133, rejected (eighth round).
+
+## Eighth round: experiments and decisions (2026-11-14)
+
+Accuracy runs shared the iGPU with other agents (timings are noise).
+
+### Built (committed 2026-11-14)
+
+- **Language guard** ([transcription.md](transcription.md#decoding)): a chunk heard as German but written in English (the English half of the prompt sentence; after 80 Hz high-pass, -6 dB or -16 LUFS on the input) is decoded again with the heard language forced and without the sentence. Same on the CUDA path.
+
+| App path, 24 recordings (errors, names wrong) | clean | 80 Hz high-pass | -6 dB | +6 dB | corpus (18 clips) |
+|---|---|---|---|---|---|
+| A: current | 126 (9) | 177 | 184 | 124 | 115 |
+| B: guard | 126 (9) | 129 | 130 | 124 | 115 |
+| C: per-language sentence | 127 (8) | 131 | 134 | 124 | 149 |
+| D: C + guard | 127 (8) | 131 | 134 | 124 | 149 |
+
+- **Per-language sentence** (C: "Hallo, das ist ein Test." for German chunks, the English sentence for English ones, vocabulary kept): no flips left (also without the guard), but 34 more errors on the corpus, all in the German/English switching dictations (joined_1 24 -> 36, joined_3 20 -> 38, joined_5 20 -> 26) and +1 on the clean recordings. Not kept; the fifth round's result (a balanced bilingual sentence is the safe one) holds. The real-switch recording (185724) is unchanged by all four variants.
+- **False triggers**: of 73 distinct chunks heard as German (stress runs) only the 2 flips had an English text; the next most English one has p(German) 0.9994. 26 German sentences full of English tech words ("Pull Request", "Deployment", "Backlog"): none classified English, one too uncertain (None). On the corpus the guard fired twice, both on the same mixed chunk (an English question followed by German, heard as German): the retry gave the identical text, no harm, one extra decode.
+- FLEURS is not cached locally: not measured (the guard only acts when token and text disagree, which clean read speech does not).
+
+### Measured, rejected
+
+All on the 24 recordings (today's pipeline: 126 errors, 9 of 68 names wrong; the cached `whisper` hyp file is older and shows 149, don't compare new runs with it).
+
+| Idea | Result |
+|---|---|
+| `FluidVoice-Labs/fluid-speech-pro` (Parakeet TDT v3 fine-tune, transformers, CPU; engine `fluid` in `hyp/`) | 148 errors, 13 names wrong: 20 fewer than Parakeet, better casing, numbers as digits, but clearly behind turbo; no iGPU runtime |
+| Model input: 80 Hz high-pass, -16 LUFS, both, high-pass + -23 LUFS | 178 / 157 / 177 / 176: 22 of 24 recordings within ±3; the totals come from one German passage per variant written in English (led to the language guard above) |
+| Time-stretching the model input (WSOLA, 0.9x / 0.8x, all chunks or only fast ones) | 158 / 187 / 149 / 168, names 13-15: 21 words fixed, 52 new; "Bijektion" still wrong. Whisper expects natural speed |
+| Chunk borders | the first and last 2 words of a chunk hold 8.8% of the words and 10.3% of the errors (noise); 1 chunk under 5 s. VAD threshold 0.35 / 0.25 / 0.15: 131 / 183 / 154 (lost speech returns, other chunks break); padding 800 ms: 122 (noise). Chunking unchanged |
+| Claude/cloud between chunks | each chunk decodes on its own, so the first "Claude"/"cloud" in a chunk is a fresh choice and later ones copy it. The recordings have 14 "Claude", 0 "cloud", 1 real error. Last sentence of the previous chunk as context 133; seen vocabulary words moved to the end 128; "Claude" last in the vocabulary 217 (a German recording translated: whatever ends the prompt tips the language); `"Claude Code"` added after "Claude" 123, names 8 (one case, not adopted); without "cloud" 127. A real test needs recordings with "Claude", "Claude Code" and "cloud" in the same and in different chunks; not recorded for now (author, 2026-11-14) |
+| Granite Speech 5.0 2B with the previous transcript as context | CPU 5-9 s per audio second, so only 2 recordings: 19/19/19/18 errors in four variants (noise) against Whisper's 8. IBM documents no context format; untested, not refuted |
+| Voxtral Mini 3B 2507 (llama.cpp b12017 Vulkan on the Arc iGPU, ggml-org Q4_K_M GGUF) | 4 recordings: 253 errors against turbo's 15, names 10/34 against 3/34; German translated into English, whole passages dropped, once a refusal ("I'm sorry, but I can't assist…") in the text. 1.7x real time (turbo 0.04x), 4.4 GB RAM. llama.cpp marks audio as experimental; Mistral's transcription mode is not reachable there |
+| Nemotron 3.5 Transcribe 30B-A4B (research only) | best German number found (FLEURS 2.7%), but 30B (21 GB as 4-bit GGUF, third-party conversion): rejected by the author, too big for smaller laptops |
+| Formula mode ("Formel … Ende Formel" to `x^2 * 2`) | not built: the author does not use spoken commands; spoken math is ambiguous without explicit brackets |
+
+Research (2026-11-14): local speech-LLMs that "understand" (Granite Speech 2B/5.0, Voxtral, Phi-4-multimodal, Gemma audio, Canary-Qwen) are either English-only, limited to 30-40 s, far slower, or less reliable than turbo with prompt and vocabulary. Wispr Flow-style products reportedly run an ASR model followed by a cloud LLM pass with app context. Worth a new look when OpenVINO supports a speech-LLM natively.
+
+Parked: the formal/informal switch for translations (branch `formality`, see its docs/translation.md; NLLB writes "Sie" for "you" in 8 of 11 en->de sentences, a cue in front of each sentence fixes it), not merged because a text-improvement model ([ideas.md](ideas.md)) may make it unnecessary. Not built by decision: a keep-list for tech terms in translations.
