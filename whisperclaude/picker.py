@@ -15,6 +15,7 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import font as tkfont
 
+from whisperclaude import formality as fm
 from whisperclaude.languages import BY_CODE, Language, search
 from whisperclaude.overlay import _work_area
 
@@ -54,12 +55,16 @@ class LanguagePicker:
     def __init__(self, root: tk.Tk, languages: list[Language],
                  recent: Callable[[], list[str]] = lambda: [],
                  recent_sources: Callable[[], list[str]] = lambda: [],
-                 own: Callable[[], list[str]] = lambda: []) -> None:
+                 own: Callable[[], list[str]] = lambda: [],
+                 formality: Callable[[], str] = lambda: fm.DEFAULT,
+                 set_formality: Callable[[str], None] = lambda mode: None) -> None:
         """recent: recently picked targets; recent_sources: recently picked sources; own: the
-        user's own languages (NLLB codes), offered first as sources."""
+        user's own languages (NLLB codes), offered first as sources; formality / set_formality:
+        read and store the "Formal | Informal" choice (kept like the recent languages)."""
         self.root = root
         self.languages = languages
         self.recent, self.recent_sources, self.own = recent, recent_sources, own
+        self.formality, self.set_formality = formality, set_formality
         self.scale = root.winfo_fpixels("1i") / 96
         self.font = tkfont.Font(family="Segoe UI", size=11)
         self.small = tkfont.Font(family="Segoe UI", size=9)
@@ -83,6 +88,7 @@ class LanguagePicker:
         win.configure(bg=BG, highlightthickness=1, highlightbackground=EDGE)
         pad = round(10 * s)
         self._build_header(pad)
+        self._build_formality(pad)
         self.query = tk.StringVar()
         self.entry = tk.Entry(win, textvariable=self.query, bg=FIELD, fg=FG, insertbackground=FG,
                               relief="flat", font=self.font, highlightthickness=0)
@@ -117,6 +123,43 @@ class LanguagePicker:
                 tk.Label(header, text="→", bg=BG, fg=GREY, font=self.font).pack(
                     side="left", anchor="s", padx=round(6 * s), pady=(0, round(4 * s)))
 
+    def _build_formality(self, pad: int) -> None:
+        """Two-sided toggle "Formal | Informal" under the header: addressing the reader as Sie/vous
+        or du/tu. Greyed out (and inert) when the target language has no such distinction."""
+        s = self.scale
+        row = tk.Frame(self.win, bg=BG)
+        row.pack(fill="x", padx=pad, pady=(round(8 * s), 0))
+        tk.Label(row, text="Address", bg=BG, fg=GREY, font=self.small).pack(side="left")
+        self.sides: dict[str, tk.Label] = {}
+        for mode, caption in ((fm.FORMAL, "Formal"), (fm.INFORMAL, "Informal")):
+            side = tk.Label(row, text=caption, font=self.small, padx=round(10 * s),
+                            pady=round(1 * s), cursor="hand2")
+            side.pack(side="left", padx=(round(8 * s), 0))
+            side.bind("<Button-1>", lambda e, m=mode: self._pick_formality(m))
+            self.sides[mode] = side
+        tk.Label(row, text="Ctrl+F", bg=BG, fg=EDGE, font=self.small).pack(side="right")
+
+    @property
+    def formality_enabled(self) -> bool:
+        return self._target is not None and fm.has_formality(self._target)
+
+    def _pick_formality(self, mode: str) -> str:
+        if self.formality_enabled and mode != self.formality():
+            self.set_formality(mode)
+            self._show_state()
+        return "break"
+
+    def _toggle_formality(self) -> str:
+        return self._pick_formality(fm.FORMAL if self.formality() == fm.INFORMAL else fm.INFORMAL)
+
+    def _show_formality(self) -> None:
+        on, current = self.formality_enabled, self.formality()
+        for mode, side in self.sides.items():
+            chosen = mode == current
+            side.configure(bg=(SELECT if chosen else FIELD) if on else BG,
+                           fg=FG if on and chosen else (GREY if on else EDGE),
+                           cursor="hand2" if on else "arrow")
+
     def _bind_keys(self) -> None:
         # Enter and Esc act on the key-up: the whole key press stays in the picker, so no
         # auto-repeat reaches the app the focus goes back to.
@@ -126,6 +169,8 @@ class LanguagePicker:
                         ("<Tab>", lambda e: self._switch("from" if self._mode == "to" else "to")),
                         ("<Shift-Tab>", lambda e: self._switch("from" if self._mode == "to" else "to")),
                         ("<Down>", lambda e: self._move(1)), ("<Up>", lambda e: self._move(-1)),
+                        ("<Control-f>", lambda e: self._toggle_formality()),
+                        ("<Control-F>", lambda e: self._toggle_formality()),
                         ("<Next>", lambda e: self._move(ROWS)),
                         ("<Prior>", lambda e: self._move(-ROWS))):
             self.entry.bind(key, fn)
@@ -241,6 +286,7 @@ class LanguagePicker:
         self.chips["to"].configure(text=_name(self._target) if self._target else "")
         for mode, chip in self.chips.items():
             chip.configure(highlightbackground=SELECT if mode == self._mode else FIELD)
+        self._show_formality()
         self.hint.configure(text=self._hint if self._mode == "to"
                             else "Enter: choose · Tab or Esc: back to the target")
 

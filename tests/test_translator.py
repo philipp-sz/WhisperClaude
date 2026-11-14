@@ -127,11 +127,13 @@ def test_translation_waits_for_the_model(monkeypatch):
     from whisperclaude import translation as tr
 
     class Fake:
-        def translate(self, text, target, source=None):
+        def translate(self, text, target, source=None, formality="informal"):
             return f"{target}:{text}"
 
     t = tr.Translation.__new__(tr.Translation) # no picker / Tk needed for this part
     t._translator, t._error, t._loaded = None, "", threading.Event()
+    t.recent = RecentLanguages.__new__(RecentLanguages)
+    t.recent.formality = "informal"
     monkeypatch.setattr(tr, "LOAD_TIMEOUT_S", 0.05)
     with pytest.raises(RuntimeError, match="still loading"):
         t.translate("x", "eng_Latn")

@@ -84,3 +84,31 @@ When the whole input is one sentence of at most 3 words, the translator asks for
 | Latency per short input (CPU) | median 137-165 ms -> 214-244 ms (about 1.5x) |
 
 Not fixed: wrong senses of UI words ("Einstellungen" -> "Employment", "Bearbeiten" -> "Treatment") and bare "Ja"/"Nein". The length penalty cannot tell two one-word senses apart; a small dictionary of UI words and interjections would be the next step. Rejected: round-trip back-translation scoring (a little better, 2.8x slower).
+
+## Formal or informal address (2026-11-14)
+
+NLLB-1.3B has no switch for "du/Sie", "tu/vous", "tú/usted". Without help it mostly writes the formal form for English "you" and mixes them within a text (20 English sentences with "you" plus 9 older ones, en->de: 13 du, 12 Sie, 1 mixed; en->fr: 8 tu, 21 vous; en->es: 17 tú, 6 usted). The picker has a toggle "Formal | Informal" (informal by default, remembered in `translate.json` as `formality`) for targets with a T-V distinction (`formality.TV_TARGETS`: German, French, Spanish, Italian, Portuguese, Dutch, Polish; the toggle is greyed out for other targets; Ctrl+F switches it from the keyboard).
+
+Mechanism (`formality.py`, `Translator._run`): a cue is put in front of each source sentence and cut off the output again. Informal: "Hey buddy, " (the model writes "Hey Kumpel,", "Hé, mon pote,", "Oye amigo,", "Ehi, amico,", "Hé maatje,", "Hej, kolego,"). Formal: "Dear Sir, " ("Lieber Herr,", "Sehr geehrter Herr,", "Cher monsieur,", "Querido señor,", "Lieve meneer,"). Plain NLLB as the formal mode was rejected: it gave Sie in only 12 of 29 sentences, the cue in 26. Only the start of the sentence is cut (up to 3 greeting or buddy words, ended by a comma). If a cue word is left that cannot be cut safely (no comma, nothing remaining, a buddy word inside the sentence), that sentence is translated again without the cue. A source that starts with a greeting itself gets no cue. Short inputs (n-best, `pick_short`) use the cue too; leaked candidates are dropped before `pick_short`.
+
+Measured on the laptop (NLLB-1.3B, CPU, 29 en sentences with "you": 9 old test set, 20 new; counts of du/Sie by regex, wording judged by hand, timings noisy because other jobs ran in parallel):
+
+| Target | Mode | du | Sie | Cue leaks | Time for 29 sentences |
+|---|---|---|---|---|---|
+| de | plain | 13 | 12 | | 42.7 s |
+| de | informal | 27 | 0 | 0 | 44.0 s |
+| de | formal | 1 (the source's own "Hey, ... du") | 26 | 0 | 41.9 s |
+| fr | plain | 8 | 21 | | 33.0 s |
+| fr | informal | 28 | 0 | 0 | 35.2 s |
+| fr | formal | 1 | 27 | 0 | 41.1 s |
+| es | plain | 17 (+2 mixed) | 6 | | 22.8 s |
+| es | informal | 21 (+4 mixed) | 0 | 0 | 25.3 s |
+| es | formal | 1 | 23 | 0 | 25.8 s |
+
+Wording against plain (outputs that changed): informal de 19 of 29 changed (3 better, 12 equal, 4 worse: "Datei" -> "Akte", "Tabelle" -> "Tabellenblatt", "Änderung" -> "Wechsel", "auf dich" dropped), fr 24 changed (1 better, 21 equal, 2 worse: "en zip" dropped, "proposition" -> "demande en mariage"), es 14 changed (0 better, 13 equal, 1 worse: "comprobar esto dos veces"). Formal de: 24 changed, 3 better, 5 worse (also "der Sitzungszimmer", "Bewerbung" for "application"), the rest equal. Latency is about 3-6 % higher (a longer input). Cue leaks in the final output: 0 in all runs; the first run for Dutch formal leaked "Lieve meneer," in 9 of 12 sentences (the stripper did not know "lieve"; fixed, test added). Italian "Fatemi sapere ... avete" (second person plural) shows up in the formal mode.
+
+Short inputs (15 English and 7 German 1-4 word inputs): informal fixes several plain failures ("Are you sure?" -> "Sind Sie sicher? Ja." becomes "Bist du sicher?", "Yes" -> "¿Qué?" becomes "Sí") but turns the bare imperative "Cancel" into "Kündige." / "Annule." (plain: "Absagen", "Annuler"). Formal turns "Abbrechen" into "Je vous en prie." (plain: "L'arrêt", also wrong). The 1 to 3 word inputs take about 1.2-1.6 times as long (the cue adds tokens).
+
+### Other translation models (research, 2026-11-14)
+
+Nothing clearly better than NLLB-1.3B at a similar cost. quickmt (one CTranslate2 model per direction, ~0.2 GB each, CC-BY-4.0, individual publisher) reports the same quality (de->en COMET 88.9 against 89.1, en->de 86.9 against 88.0) at 10-30x the speed, but does not fix the audit's errors and needs a model per direction (pivot through English otherwise): not adopted. OPUS-MT and Firefox Translations models are below NLLB; TranslateGemma, Hy-MT2 and MADLAD-400 are LLMs or too large. Audit of NLLB's errors on 74 dictation-style inputs: formal "Sie" in 8 of 11 en->de sentences (fixed by the switch above), tech terms translated in en->de (pull request -> "Zuganfrage", build -> "Aufbau"), about 10 of 41 de->en with a wrong sense ("Bijektion" -> "bias"). Whole paragraphs instead of sentences dropped sentences (rejected); beam 4: about 10 better, 3 worse, 1.4x time (rejected). A small keep-list for tech terms is the remaining idea (placeholders broke German articles).

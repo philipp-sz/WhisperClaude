@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from whisperclaude import formality as fm
 from whisperclaude.inserter import capture_selection
 from whisperclaude.languages import BY_CODE, SOURCE_CODES
 from whisperclaude.picker import Choice, LanguagePicker
@@ -32,8 +33,15 @@ class RecentLanguages:
             raw = json.loads(path.read_text(encoding="utf-8"))
             self.codes = [c for c in raw.get("recent", []) if c in BY_CODE][:KEEP_RECENT]
             self.sources = [c for c in raw.get("sources", []) if c in BY_CODE][:KEEP_RECENT]
+            mode = raw.get("formality")
+            self.formality = mode if mode in (fm.FORMAL, fm.INFORMAL) else fm.DEFAULT
         except (OSError, ValueError, AttributeError):
-            self.codes, self.sources = [], []
+            self.codes, self.sources, self.formality = [], [], fm.DEFAULT
+
+    def set_formality(self, mode: str) -> None:
+        if mode in (fm.FORMAL, fm.INFORMAL):
+            self.formality = mode
+            self._save()
 
     def add(self, code: str) -> None:
         self.codes = [code] + [c for c in self.codes if c != code][:KEEP_RECENT - 1]
@@ -45,7 +53,8 @@ class RecentLanguages:
 
     def _save(self) -> None:
         try:
-            self.path.write_text(json.dumps({"recent": self.codes, "sources": self.sources}),
+            self.path.write_text(json.dumps({"recent": self.codes, "sources": self.sources,
+                                          "formality": self.formality}),
                                  encoding="utf-8")
         except OSError:
             log.warning("could not save the recent languages", exc_info=True)
@@ -63,6 +72,8 @@ class Translation:
         picker.recent = lambda: recent.codes
         picker.recent_sources = lambda: recent.sources
         picker.own = self.own_sources
+        picker.formality = lambda: recent.formality
+        picker.set_formality = recent.set_formality
         self._translator = None
         self._error = ""
         self._loaded = threading.Event()
@@ -140,4 +151,4 @@ class Translation:
                                "downloads it), try again in a minute")
         if self._translator is None:
             raise RuntimeError(self._error)
-        return self._translator.translate(text, target, source)
+        return self._translator.translate(text, target, source, self.recent.formality)

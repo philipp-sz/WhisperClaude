@@ -25,6 +25,7 @@ from huggingface_hub import snapshot_download
 from py3langid.langid import MODEL_FILE, LanguageIdentifier
 from tokenizers import Tokenizer
 
+from whisperclaude import formality as fm
 from whisperclaude.languages import NLLB_CODES, SOURCE_CODES
 from whisperclaude.system import MIN_RAM_GB, cuda_available, free_vram_mb, total_ram_gb, user_languages
 
@@ -423,9 +424,40 @@ class Translator:
         sources = source_languages(sentences, self.detector.detect, self.detector.detect_text)
         return sorted(dict.fromkeys(sources), key=lambda code: -sources.count(code))
 
-    def translate(self, text: str, target: str, source: str | None = None) -> str:
+    def _run(self, sentences: list[str], sources: list[str], target: str, short: bool,
+             source_text: str, formality: str | None) -> list[str | None]:
+        """Translate the sentences in one batch. formality: the cue's mode (see formality.py) or
+        None for no cue; the cue is cut off again, and a sentence whose cue could not be cut off
+        safely gives None. short: one input of at most SHORT_WORDS words (n-best, pick_short)."""
+        cues = [fm.cue_for(formality, s) if formality else "" for s in sentences]
+        batch = [self._tokens(c + s, src) for c, s, src in zip(cues, sentences, sources)]
+        with self._lazy.use() as model: # waits for a running load, blocks an unload
+            results = model.translate_batch(
+                batch, target_prefix=[[target]] * len(batch),
+                beam_size=max(self.beam_size, SHORT_BEAM) if short else self.beam_size,
+                max_decoding_length=min(512, 2 * max(map(len, batch)) + 10),
+                **({"num_hypotheses": SHORT_HYPOTHESES, "return_scores": True} if short else {}))
+        out: list[str | None] = []
+        for sentence, cue, r in zip(sentences, cues, results):
+            texts = [self._decode(h) for h in r.hypotheses]
+            scores = list(r.scores) if short else [0.0]
+            if cue:
+                stripped = [fm.strip_cue(formality, sentence, t) for t in texts]
+                kept = [(t, sc) for t, sc in zip(stripped, scores) if t is not None]
+                texts, scores = [t for t, _ in kept], [sc for _, sc in kept]
+            if not texts:
+                out.append(None)
+                continue
+            best = pick_short(source_text, texts, scores) if short else 0
+            out.append(tidy(sentence, texts[best], target))
+        return out
+
+    def translate(self, text: str, target: str, source: str | None = None,
+                  formality: str = fm.DEFAULT) -> str:
         """Translate text into `target` (NLLB code, e.g. "deu_Latn"), keeping its layout.
-        source: the text's language if the user picked it, None = detect per sentence."""
+        source: the text's language if the user picked it, None = detect per sentence.
+        formality: "informal" or "formal" address, for targets that have the distinction
+        (formality.TV_TARGETS); other targets ignore it."""
         if target not in NLLB_CODES or (source is not None and source not in NLLB_CODES):
             raise ValueError(f"unknown language {target!r} / {source!r}")
         rows = segment(text)
@@ -434,19 +466,18 @@ class Translator:
         todo = [i for i, src in enumerate(sources) if src != target]
         out = list(sentences)
         if todo:
-            batch = [self._tokens(sentences[i], sources[i]) for i in todo]
             short = len(todo) == 1 and len(text.split()) <= SHORT_WORDS
-            with self._lazy.use() as model: # waits for a running load, blocks an unload
-                results = model.translate_batch(
-                    batch, target_prefix=[[target]] * len(batch),
-                    beam_size=max(self.beam_size, SHORT_BEAM) if short else self.beam_size,
-                    max_decoding_length=min(512, 2 * max(map(len, batch)) + 10),
-                    **({"num_hypotheses": SHORT_HYPOTHESES, "return_scores": True} if short else {}))
-            for i, r in zip(todo, results):
-                best = 0
-                if short:
-                    best = pick_short(text, [self._decode(h) for h in r.hypotheses], r.scores)
-                out[i] = tidy(sentences[i], self._decode(r.hypotheses[best]), target)
+            mode = formality if fm.has_formality(target) and fm.cue(formality) else None
+            args = ([sentences[i] for i in todo], [sources[i] for i in todo], target, short, text)
+            done = self._run(*args, mode)
+            plain = [j for j, t in enumerate(done) if t is None] # a cue could not be cut off
+            if plain:
+                again = self._run([args[0][j] for j in plain], [args[1][j] for j in plain],
+                                  target, short, text, None)
+                for j, t in zip(plain, again):
+                    done[j] = t
+            for i, t in zip(todo, done):
+                out[i] = t
         it = iter(out)
         joiner = "" if target in ("jpn_Jpan", "zho_Hans", "zho_Hant", "yue_Hant") else " "
         return "\n".join(prefix + joiner.join(next(it) for _ in line) + suffix
