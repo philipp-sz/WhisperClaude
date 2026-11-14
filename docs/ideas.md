@@ -10,6 +10,12 @@ The author's ideas after the eighth round, written down as he described them. No
 - Could also help translations, and enable new features (tone, notes, e-mails, lists, self-corrections).
 - If it works: the formal/informal switch (branch `formality`) may become unnecessary, and the spoken commands (`commands.py`) could be removed (the author finds they interrupt his thinking while speaking and are not reliable enough).
 
+### Related: a language model during or after decoding
+
+- **Shallow fusion with an n-gram LM (KenLM):** an n-gram language model runs alongside the acoustic decoder during beam search and, at every word, boosts word sequences that make grammatical or domain sense.
+- **N-best rescoring with a small encoder:** beam search produces the top 5-10 candidates, and a tiny encoder model (a small BERT reranker) scores them for linguistic plausibility and picks the winner.
+- Earlier measurements to start from ([real-recordings.md](real-recordings.md)): OpenVINO GenAI on the iGPU has no beam search and returns no usable scores (always 1.0). An own beam search on the stateful decoder exists (git stash "Beam search on OpenVINO, rejected 2026-11-13", ~1.9x GPU time). The N-best ceiling with 8 sampled candidates was 131 -> 93 errors (oracle pick), but the main sound-alikes ("was"/"dass", "cloud"/"Claude") were rarely among the candidates. A German LM over fixed sound-alike pairs found only 5 pair errors. Neither fusion nor a BERT reranker was tried.
+
 ## 2. Features that build on it
 
 - **Pill animation for the stages:** "Transcribing" leaves the pill downwards, "Fixing language" comes in from above, then e.g. "Improving tone". Needs testing.
